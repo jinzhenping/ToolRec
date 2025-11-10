@@ -165,9 +165,31 @@ def data_preparation(config, dataset):
         model_type = config["MODEL_TYPE"]
         built_datasets = dataset.build()
 
-        train_dataset, valid_dataset, test_dataset = built_datasets
+        # benchmark_filename 사용 시 train/test만 반환될 수 있으므로 처리
+        if len(built_datasets) == 2:
+            # train과 test만 있는 경우, train을 train/valid로 분할
+            train_dataset, test_dataset = built_datasets
+            # train 데이터를 90% train, 10% valid로 분할
+            split_ratio = config["eval_args"]["split"].get("RS", [0.9, 0.1])
+            if isinstance(split_ratio, list) and len(split_ratio) == 2:
+                train_ratio = split_ratio[0] / (split_ratio[0] + split_ratio[1])
+                train_dataset, valid_dataset = train_dataset.split_by_ratio(
+                    [train_ratio, 1 - train_ratio], group_by=config["eval_args"].get("group_by")
+                )
+            else:
+                # 기본값: 90% train, 10% valid
+                train_dataset, valid_dataset = train_dataset.split_by_ratio(
+                    [0.9, 0.1], group_by=config["eval_args"].get("group_by")
+                )
+        elif len(built_datasets) == 3:
+            train_dataset, valid_dataset, test_dataset = built_datasets
+        else:
+            raise ValueError(f"Expected 2 or 3 datasets from build(), got {len(built_datasets)}")
+        
+        # create_samplers에 전달할 데이터셋 리스트 (train, valid, test)
+        datasets_for_sampler = [train_dataset, valid_dataset, test_dataset]
         train_sampler, valid_sampler, test_sampler = create_samplers(
-            config, dataset, built_datasets
+            config, dataset, datasets_for_sampler
         )
 
         if model_type != ModelType.KNOWLEDGE:
