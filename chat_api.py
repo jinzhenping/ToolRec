@@ -4,7 +4,7 @@ import argparse
 
 
 def llm_chat(User_message, stop='12'):
-    openai.api_key = "sk-proj-"
+    openai.api_key = ""
     openai.api_base = "https://api.openai.com/v1"
 
     if len(stop) < 3:
