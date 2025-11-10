@@ -45,7 +45,9 @@ eval_args:
     group_by: user
     order: TO  # Time Order: 시간 순서대로 정렬
     split: {'RS': [0.9, 0.1]}  # train 데이터를 90% train, 10% valid로 분할 (test는 별도 파일 사용)
-    mode: labeled  # Labeled evaluation: 테스트 데이터에 있는 아이템만 평가 (MIND는 각 사용자당 5개 후보만 있음)
+    mode: 
+        valid: full  # Valid는 train 데이터에서 분할된 것이므로 full 모드 사용 (각 사용자의 마지막 아이템만 positive)
+        test: labeled  # Test는 제공된 테스트셋 사용 (각 사용자당 5개 후보만 있음)
 
 # 메트릭 설정
 # MIND 테스트셋은 각 사용자당 5개 후보만 있으므로 topk는 최대 5까지만 의미가 있음
