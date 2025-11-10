@@ -30,8 +30,8 @@ model_file_dict = {
         },
         'mind': {
             'None': 'SASRec-Nov-10-2025_16-08-05.pth',  # 기본 모델
-            'category': 'SASRec_AddInfo2-category-XXXX.pth',  # 카테고리 기반 검색 도구
-            'subcategory': 'SASRec_AddInfo2-subcategory-XXXX.pth',  # 서브카테고리 기반 검색 도구
+            'category': 'SASRec_AddInfo2-Nov-10-2025_16-35-20.pth',  # 카테고리 기반 검색 도구
+            'subcategory': 'SASRec_AddInfo2-Nov-10-2025_16-54-08.pth',  # 서브카테고리 기반 검색 도구
         }},
     'BERT4Rec': {
         'ml-1m': {

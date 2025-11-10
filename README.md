@@ -123,7 +123,7 @@ If you have any questions, feel free to contact via email:
 # 기본 학습 (설정 파일에 gpu_id: 1이 이미 포함되어 있음)
 python run_recbole.py --model=SASRec --dataset=mind --config_files=dataset/mind/mind.yaml
 
-# 카테고리 기반 검색 도구 학습습
+# 카테고리 기반 검색 도구 학습
 python run_recbole.py \
   --dataset=mind \
   --model=SASRec_AddInfo2 \
@@ -137,6 +137,9 @@ python run_recbole.py \
   --side_feature_size=100 \
   --bert_usage=True \
   --pretrained_name=/SASRec-Nov-10-2025_16-08-05.pth
+
+~/jin/ToolRec/ToolRec/dataset/saved_file/SASRec_AddInfo2-Nov-10-2025_16-35-20.pth
+
 
 # 서브카테고리 기반 검색 도구 학습
 python run_recbole.py \
@@ -152,4 +155,26 @@ python run_recbole.py \
   --side_feature_size=100 \
   --bert_usage=True \
   --pretrained_name=/SASRec-Nov-10-2025_16-08-05.pth
-  
+
+~/jin/ToolRec/ToolRec/dataset/saved_file/SASRec_AddInfo2-Nov-10-2025_16-54-08.pth
+
+
+# 테스트 사용자 히스토리 정보 생성
+python run_recbole.py \
+  --dataset=mind \
+  --model=SASRec \
+  --config_files=dataset/mind/mind.yaml \
+  --gpu_id=1 \
+  --dump_userInfo_chat=True \
+  --test_v=test/
+
+# 사용자/아이템 프로필 생성
+python run_recbole.py \
+  --dataset=mind \
+  --model=SASRec \
+  --config_files=dataset/mind/mind.yaml \
+  --gpu_id=1 \
+  --dump_profile=True \
+  --test_v=test/
+
+python chat_RecAct.py --start=0 --step_num=100

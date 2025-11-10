@@ -4,8 +4,8 @@ import argparse
 
 
 def llm_chat(User_message, stop='12'):
-    openai.api_key = "sk-XXXX"
-    openai.api_base = "XXXX"
+    openai.api_key = "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"
+    openai.api_base = "https://api.openai.com/v1"
 
     if len(stop) < 3:
         stop=None
@@ -18,7 +18,7 @@ def llm_chat(User_message, stop='12'):
         response = openai.ChatCompletion.create(
             #model='gpt-3.5-turbo',
             # model='gpt-3.5-turbo-16k',
-            model='gpt-4o', # test
+            model='gpt-4o-mini', # test
             messages=our_messages,
             stop=stop
         )
@@ -26,7 +26,7 @@ def llm_chat(User_message, stop='12'):
         response = openai.ChatCompletion.create(
             #model='gpt-3.5-turbo',
             # model='gpt-3.5-turbo-16k',
-            model='gpt-4o', # test
+            model='gpt-4o-mini', # test
             messages=our_messages
         )
     llm_response =  response['choices'][0]['message'].to_dict()['content']

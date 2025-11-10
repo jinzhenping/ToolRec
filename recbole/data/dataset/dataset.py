@@ -160,6 +160,13 @@ class Dataset(torch.utils.data.Dataset):
             elif self.dataset_name == 'yelp':
                 item_profile[item_row['item_id']] = patterns['item_pattern'].format(genre='&'.join(item_row['categories'][:2] if len(item_row)>2 else item_row['categories']), name=item_row['name'], iid=item_row['item_id'], city=' '.join(item_row['city']))
                 itemID_name[item_row['item_id']] = item_row['name']
+            elif self.dataset_name == 'mind':
+                # MIND 데이터셋: title, category, subcategory 사용
+                title = ' '.join(item_row['title']) if isinstance(item_row['title'], list) else str(item_row['title'])
+                category = ' '.join(item_row['category']) if isinstance(item_row['category'], list) else str(item_row['category'])
+                subcategory = ' '.join(item_row['subcategory']) if isinstance(item_row['subcategory'], list) else str(item_row['subcategory'])
+                item_profile[item_row['item_id']] = patterns['item_pattern'].format(iid=item_row['item_id'], title=title, category=category, subcategory=subcategory)
+                itemID_name[item_row['item_id']] = title
 
         if self.dataset_name == 'ml-1m':
             for index, user_row in user_df.iterrows():
@@ -182,6 +189,16 @@ class Dataset(torch.utils.data.Dataset):
                     item_inter = item_profile[his_item]
                     item_score = patterns["score_pattern"].format(score=his_score)
                     user_info = user_info + item_inter + item_score
+                user_profile[uid] = user_description + user_info
+        elif self.dataset_name == 'mind':
+            # MIND 데이터셋: 사용자 프로필 생성 (score_pattern 없음)
+            for uid in uid_iid.keys():
+                user_description = patterns['user_pattern']
+                user_info = ""
+                for (his_item, his_score) in zip(uid_iid_his[uid], uid_iid_hisScore[uid]):
+                    item_inter = item_profile[his_item]
+                    # MIND는 rating이 항상 1.0이므로 score_pattern 생략 가능
+                    user_info = user_info + item_inter
                 user_profile[uid] = user_description + user_info
 
         file_path = './dataset/prompts/' + self.config['test_v'] + '/' + self.dataset_name + '_chat.pkl'
