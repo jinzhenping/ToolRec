@@ -136,7 +136,7 @@ pytz
 PyYAML==6.0
 pyzmq==19.0.2
 ray==2.4.0
-recbole==0.2.0
+recbole==0.2.1
 reckit==0.2.0
 regex 
 requests 
