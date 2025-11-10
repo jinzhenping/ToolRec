@@ -157,7 +157,13 @@ class Recall(TopkMetric):
         return metric_dict
 
     def metric_info(self, pos_index, pos_len):
-        return np.cumsum(pos_index, axis=1) / pos_len.reshape(-1, 1)
+        # pos_len이 0인 경우 division by zero 방지
+        pos_len_safe = pos_len.reshape(-1, 1)
+        pos_len_safe = np.where(pos_len_safe == 0, 1, pos_len_safe)  # 0을 1로 대체하여 nan 방지
+        result = np.cumsum(pos_index, axis=1) / pos_len_safe
+        # pos_len이 0인 사용자는 nan이 되므로, 이를 0으로 설정
+        result = np.where(pos_len.reshape(-1, 1) == 0, 0, result)
+        return result
 
 
 class NDCG(TopkMetric):

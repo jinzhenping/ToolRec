@@ -549,6 +549,12 @@ class Trainer(AbstractTrainer):
             return interaction, origin_scores, positive_u, positive_i
         elif self.config["eval_type"] == EvaluatorType.RANKING:
             col_idx = interaction[self.config["ITEM_ID_FIELD"]]
+            uid_field = self.config["USER_ID_FIELD"]
+            user_ids = interaction[uid_field]
+            
+            # 모든 interaction의 사용자를 고려하여 batch_user_num 계산
+            unique_users_all, user_to_idx_all = torch.unique(user_ids, return_inverse=True)
+            batch_user_num = len(unique_users_all)
             
             # labeled 모드에서 positive_u와 positive_i가 None인 경우, rating 필드를 기반으로 positive 식별
             if positive_u is None or positive_i is None:
@@ -560,56 +566,46 @@ class Trainer(AbstractTrainer):
                     
                     if len(positive_indices) > 0:
                         # 사용자별로 그룹화
-                        uid_field = self.config["USER_ID_FIELD"]
-                        user_ids = interaction[uid_field][positive_indices]
-                        item_ids = interaction[self.config["ITEM_ID_FIELD"]][positive_indices]
+                        user_ids_positive = user_ids[positive_indices]
+                        item_ids_positive = col_idx[positive_indices]
                         
-                        # 고유한 사용자 ID와 인덱스 매핑
-                        unique_users, user_to_idx = torch.unique(user_ids, return_inverse=True)
-                        batch_user_num = len(unique_users)
+                        # positive_u를 unique_users_all의 인덱스로 매핑
+                        positive_u_list = []
+                        for uid in user_ids_positive:
+                            idx = (unique_users_all == uid).nonzero(as_tuple=True)[0]
+                            if len(idx) > 0:
+                                positive_u_list.append(idx[0].item())
                         
-                        # positive_u: 사용자 인덱스
-                        positive_u = user_to_idx
-                        # positive_i: 아이템 ID
-                        positive_i = item_ids
+                        if len(positive_u_list) > 0:
+                            positive_u = torch.tensor(positive_u_list, dtype=torch.long, device=self.device)
+                            positive_i = item_ids_positive
+                        else:
+                            positive_u = torch.tensor([], dtype=torch.long, device=self.device)
+                            positive_i = torch.tensor([], dtype=torch.long, device=self.device)
                     else:
                         # positive 아이템이 없는 경우 빈 텐서 반환
-                        batch_user_num = 1
                         positive_u = torch.tensor([], dtype=torch.long, device=self.device)
                         positive_i = torch.tensor([], dtype=torch.long, device=self.device)
                 else:
                     # rating 필드가 없는 경우, 모든 아이템을 positive로 간주
-                    uid_field = self.config["USER_ID_FIELD"]
-                    user_ids = interaction[uid_field]
-                    item_ids = interaction[self.config["ITEM_ID_FIELD"]]
-                    
-                    unique_users, user_to_idx = torch.unique(user_ids, return_inverse=True)
-                    batch_user_num = len(unique_users)
-                    
-                    positive_u = user_to_idx
-                    positive_i = item_ids
+                    positive_u = user_to_idx_all
+                    positive_i = col_idx
             else:
-                batch_user_num = positive_u[-1] + 1
+                # positive_u가 이미 설정된 경우, unique_users_all의 인덱스와 일치하는지 확인
+                # positive_u가 사용자 ID인 경우 인덱스로 변환 필요
+                pass
             
-            # row_idx가 None인 경우, 모든 interaction의 사용자를 고려하여 batch_user_num 재계산
-            if row_idx is None:
-                uid_field = self.config["USER_ID_FIELD"]
-                user_ids = interaction[uid_field]
-                unique_users_all, user_to_idx_all = torch.unique(user_ids, return_inverse=True)
-                batch_user_num = len(unique_users_all)
-                # user_to_idx를 0부터 시작하도록 정규화
-                user_to_idx = user_to_idx_all
-            else:
-                user_to_idx = None
-            
+            # 각 사용자별로 테스트 데이터에 있는 아이템만 점수 행렬 생성
+            # labeled 모드에서는 전체 아이템이 아닌 테스트 데이터의 아이템만 평가
             scores = torch.full(
                 (batch_user_num, self.tot_item_num), -np.inf, device=self.device
             )
+            
             if row_idx is not None and len(row_idx) > 0:
                 scores[row_idx, col_idx] = origin_scores
             else:
                 # row_idx가 None인 경우, 사용자별로 점수 할당
-                for i, (user_idx, item_idx) in enumerate(zip(user_to_idx, col_idx)):
+                for i, (user_idx, item_idx) in enumerate(zip(user_to_idx_all, col_idx)):
                     scores[user_idx, item_idx] = origin_scores[i]
             
             return interaction, scores, positive_u, positive_i
