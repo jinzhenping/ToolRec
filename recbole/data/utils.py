@@ -171,15 +171,22 @@ def data_preparation(config, dataset):
             train_dataset, test_dataset = built_datasets
             # train 데이터를 90% train, 10% valid로 분할
             split_ratio = config["eval_args"]["split"].get("RS", [0.9, 0.1])
+            # group_by가 "user"인 경우 실제 필드명으로 변환
+            group_by = config["eval_args"].get("group_by")
+            if group_by == "user":
+                group_by = dataset.uid_field
+            elif group_by is None or group_by.lower() == "none":
+                group_by = None
+            
             if isinstance(split_ratio, list) and len(split_ratio) == 2:
                 train_ratio = split_ratio[0] / (split_ratio[0] + split_ratio[1])
                 train_dataset, valid_dataset = train_dataset.split_by_ratio(
-                    [train_ratio, 1 - train_ratio], group_by=config["eval_args"].get("group_by")
+                    [train_ratio, 1 - train_ratio], group_by=group_by
                 )
             else:
                 # 기본값: 90% train, 10% valid
                 train_dataset, valid_dataset = train_dataset.split_by_ratio(
-                    [0.9, 0.1], group_by=config["eval_args"].get("group_by")
+                    [0.9, 0.1], group_by=group_by
                 )
         elif len(built_datasets) == 3:
             train_dataset, valid_dataset, test_dataset = built_datasets
