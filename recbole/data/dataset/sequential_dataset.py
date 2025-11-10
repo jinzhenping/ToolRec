@@ -44,6 +44,12 @@ class SequentialDataset(Dataset):
         super()._change_feat_format()
 
         if self.config["benchmark_filename"] is not None:
+            # benchmark 파일에도 item_id_list가 없으면 데이터 증강 수행
+            list_suffix = self.config["LIST_SUFFIX"]
+            item_id_list_field = self.iid_field + list_suffix
+            if item_id_list_field not in self.inter_feat:
+                self.logger.debug("Augmentation for sequential recommendation (benchmark mode).")
+                self.data_augmentation()
             return
         self.logger.debug("Augmentation for sequential recommendation.")
         self.data_augmentation()
@@ -157,12 +163,27 @@ class SequentialDataset(Dataset):
             if field + list_suffix in self.inter_feat:
                 list_field = field + list_suffix
                 setattr(self, f"{field}_list_field", list_field)
+        
+        # item_id_list_field가 설정되지 않은 경우 명시적으로 설정
+        if not hasattr(self, 'item_id_list_field'):
+            item_id_list_field = self.iid_field + list_suffix
+            if item_id_list_field in self.inter_feat:
+                self.item_id_list_field = item_id_list_field
+            else:
+                # item_id_list 필드가 없는 경우 기본값 사용
+                self.item_id_list_field = self.iid_field + list_suffix
+        
         self.set_field_property(
             self.item_list_length_field, FeatureType.TOKEN, FeatureSource.INTERACTION, 1
         )
-        self.inter_feat[self.item_list_length_field] = self.inter_feat[
-            self.item_id_list_field
-        ].agg(len)
+        if self.item_id_list_field in self.inter_feat:
+            # pandas의 agg(len) 대신 transform 사용하여 FutureWarning 방지
+            self.inter_feat[self.item_list_length_field] = self.inter_feat[
+                self.item_id_list_field
+            ].transform(len)
+        else:
+            # item_id_list 필드가 없는 경우 각 행의 길이를 1로 설정
+            self.inter_feat[self.item_list_length_field] = 1
 
     def inter_matrix(self, form="coo", value_field=None):
         """Get sparse matrix that describe interactions between user_id and item_id.
