@@ -117,7 +117,7 @@ class SASRec_AddInfo2(SequentialRecommender):
 
         if config["load_pretrain"]:
             pretrained_path = config["checkpoint_dir"] + config["pretrained_name"]
-            pretrained_parameter = torch.load(pretrained_path)["state_dict"]
+            pretrained_parameter = torch.load(pretrained_path, weights_only=False)["state_dict"]
             current_state_dict = self.state_dict()
             for key in list(pretrained_parameter.keys()):
                 if key not in current_state_dict:
