@@ -591,6 +591,17 @@ class Trainer(AbstractTrainer):
             else:
                 batch_user_num = positive_u[-1] + 1
             
+            # row_idx가 None인 경우, 모든 interaction의 사용자를 고려하여 batch_user_num 재계산
+            if row_idx is None:
+                uid_field = self.config["USER_ID_FIELD"]
+                user_ids = interaction[uid_field]
+                unique_users_all, user_to_idx_all = torch.unique(user_ids, return_inverse=True)
+                batch_user_num = len(unique_users_all)
+                # user_to_idx를 0부터 시작하도록 정규화
+                user_to_idx = user_to_idx_all
+            else:
+                user_to_idx = None
+            
             scores = torch.full(
                 (batch_user_num, self.tot_item_num), -np.inf, device=self.device
             )
@@ -598,9 +609,6 @@ class Trainer(AbstractTrainer):
                 scores[row_idx, col_idx] = origin_scores
             else:
                 # row_idx가 None인 경우, 사용자별로 점수 할당
-                uid_field = self.config["USER_ID_FIELD"]
-                user_ids = interaction[uid_field]
-                unique_users, user_to_idx = torch.unique(user_ids, return_inverse=True)
                 for i, (user_idx, item_idx) in enumerate(zip(user_to_idx, col_idx)):
                     scores[user_idx, item_idx] = origin_scores[i]
             
