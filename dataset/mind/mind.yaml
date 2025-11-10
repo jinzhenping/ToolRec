@@ -1,0 +1,73 @@
+# MIND 데이터셋 설정 파일
+# RecBole에서 사용할 기본 설정
+
+# 데이터셋 기본 정보
+field_separator: "\t"
+seq_separator: " "
+USER_ID_FIELD: user_id
+ITEM_ID_FIELD: item_id
+RATING_FIELD: rating
+TIME_FIELD: timestamp
+
+# 순차 추천 모델을 위한 설정
+NEG_PREFIX: neg_
+ITEM_LIST_LENGTH_FIELD: item_length
+LIST_SUFFIX: _list
+MAX_ITEM_LIST_LENGTH: 50
+POSITION_FIELD: position_id
+
+# 로드할 컬럼 설정
+load_col:
+    inter: ['user_id', 'item_id', 'rating', 'timestamp']
+    user: ['user_id']
+    item: ['item_id', 'title', 'category', 'subcategory']
+
+# 데이터 경로
+data_path: ./dataset
+
+# 학습 설정
+learner: adam
+learning_rate: 0.001
+epochs: 300
+train_batch_size: 256
+eval_batch_size: 256
+
+# Loss 설정 (순차 추천 모델은 보통 CE 사용)
+loss_type: 'CE'
+
+# Benchmark 파일 사용 (제공된 테스트셋 사용)
+# mind.train.inter와 mind.test.inter 파일을 사용
+benchmark_filename: ['train', 'test']
+
+# 평가 설정
+# benchmark_filename 사용 시 train 데이터에서 valid를 분리
+eval_args:
+    group_by: user
+    order: TO  # Time Order: 시간 순서대로 정렬
+    split: {'RS': [0.9, 0.1]}  # train 데이터를 90% train, 10% valid로 분할 (test는 별도 파일 사용)
+    mode: full  # Full ranking evaluation
+
+# 메트릭 설정
+# MIND 테스트셋은 각 사용자당 5개 후보만 있으므로 topk는 최대 5까지만 의미가 있음
+metrics: ['Recall', 'NDCG', 'MRR', 'Hit']
+topk: [1, 5]  # HIT@1, NDCG@5 등 (후보가 5개뿐이므로 @5가 최대)
+valid_metric: Recall@5  # 후보가 5개뿐이므로 @5 사용
+valid_metric_bigger: True
+
+# Negative sampling 비활성화 (순차 추천 모델은 보통 negative sampling 없이 사용)
+train_neg_sample_args: ~
+
+# 조기 종료
+stopping_step: 20
+
+# 체크포인트
+checkpoint_dir: ./dataset/saved_file
+
+# GPU 설정
+use_gpu: True
+gpu_id: 1
+
+# 시드 설정
+seed: 2023
+reproducibility: True
+
