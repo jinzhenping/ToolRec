@@ -162,6 +162,9 @@ class Collector(object):
             pos_matrix = torch.zeros_like(scores_tensor, dtype=torch.int)
             # positive_u와 positive_i가 비어있지 않고, 인덱스 범위 내에 있는 경우에만 설정
             if len(positive_u) > 0 and len(positive_i) > 0:
+                # 디바이스 일치 확인 및 이동
+                positive_u = positive_u.to(scores_tensor.device)
+                positive_i = positive_i.to(scores_tensor.device)
                 # 인덱스 범위 확인
                 valid_u = (positive_u >= 0) & (positive_u < scores_tensor.shape[0])
                 valid_i = (positive_i >= 0) & (positive_i < scores_tensor.shape[1])
