@@ -72,7 +72,15 @@ class Collector(object):
         self.config = config
         self.data_struct = DataStruct()
         self.register = Register(config)
-        self.full = "full" in config["eval_args"]["mode"]
+        # mode가 딕셔너리인 경우 (valid/test 분리)와 문자열인 경우 모두 처리
+        mode = config["eval_args"]["mode"]
+        if isinstance(mode, dict):
+            # valid와 test 모드를 모두 확인
+            self.full = "full" in mode.get("valid", "") or "full" in mode.get("test", "")
+            self.labeled = "labeled" in mode.get("valid", "") or "labeled" in mode.get("test", "")
+        else:
+            self.full = "full" in mode
+            self.labeled = "labeled" in mode
         self.topk = self.config["topk"]
         self.device = self.config["device"]
 
@@ -171,6 +179,19 @@ class Collector(object):
                 valid_mask = valid_u & valid_i
                 if valid_mask.any():
                     pos_matrix[positive_u[valid_mask], positive_i[valid_mask]] = 1
+                # 디버깅: 범위를 벗어나는 경우 로그 출력
+                if not valid_mask.all():
+                    invalid_count = (~valid_mask).sum().item()
+                    total_count = len(valid_mask)
+                    if invalid_count > 0:
+                        logger = getLogger()
+                        logger.warning(
+                            f"Warning: {invalid_count}/{total_count} positive items are out of range. "
+                            f"positive_u range: [{positive_u.min().item()}, {positive_u.max().item()}], "
+                            f"positive_i range: [{positive_i.min().item()}, {positive_i.max().item()}], "
+                            f"scores_tensor shape: {scores_tensor.shape}, "
+                            f"valid_u count: {valid_u.sum().item()}, valid_i count: {valid_i.sum().item()}"
+                        )
             pos_len_list = pos_matrix.sum(dim=1, keepdim=True)
             pos_idx = torch.gather(pos_matrix, dim=1, index=topk_idx)
             result = torch.cat((pos_idx, pos_len_list), dim=1)
@@ -181,7 +202,17 @@ class Collector(object):
 
             # get the index of positive items in the ranking list
             pos_matrix = torch.zeros_like(scores_tensor)
-            pos_matrix[positive_u, positive_i] = 1
+            # positive_u와 positive_i가 비어있지 않고, 인덱스 범위 내에 있는 경우에만 설정
+            if len(positive_u) > 0 and len(positive_i) > 0:
+                # 디바이스 일치 확인 및 이동
+                positive_u = positive_u.to(scores_tensor.device)
+                positive_i = positive_i.to(scores_tensor.device)
+                # 인덱스 범위 확인
+                valid_u = (positive_u >= 0) & (positive_u < scores_tensor.shape[0])
+                valid_i = (positive_i >= 0) & (positive_i < scores_tensor.shape[1])
+                valid_mask = valid_u & valid_i
+                if valid_mask.any():
+                    pos_matrix[positive_u[valid_mask], positive_i[valid_mask]] = 1
             pos_index = torch.gather(pos_matrix, dim=1, index=desc_index)
 
             avg_rank = self._average_rank(desc_scores)

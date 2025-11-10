@@ -595,8 +595,12 @@ class Trainer(AbstractTrainer):
                 # positive_u가 사용자 ID인 경우 인덱스로 변환 필요
                 pass
             
-            # 각 사용자별로 테스트 데이터에 있는 아이템만 점수 행렬 생성
-            # labeled 모드에서는 전체 아이템이 아닌 테스트 데이터의 아이템만 평가
+            # labeled 모드에서 각 사용자별로 테스트 데이터에 있는 아이템만 평가
+            # 각 사용자별로 테스트 데이터에 있는 아이템의 점수만 계산
+            # scores 행렬: (batch_user_num, 각 사용자별 후보 아이템 수)
+            # 하지만 RecBole의 collector는 (n_users, n_items) 형태를 기대하므로
+            # 전체 아이템 크기로 생성하되, 테스트 데이터에 있는 아이템만 점수 할당
+            
             scores = torch.full(
                 (batch_user_num, self.tot_item_num), -np.inf, device=self.device
             )
@@ -607,6 +611,11 @@ class Trainer(AbstractTrainer):
                 # row_idx가 None인 경우, 사용자별로 점수 할당
                 for i, (user_idx, item_idx) in enumerate(zip(user_to_idx_all, col_idx)):
                     scores[user_idx, item_idx] = origin_scores[i]
+            
+            # labeled 모드: positive_i를 테스트 데이터에 있는 아이템의 인덱스로 변환
+            # positive_i는 아이템 ID이므로, 이를 scores 행렬의 열 인덱스로 변환
+            # 하지만 RecBole에서 아이템 ID는 이미 인덱스로 변환되어 있으므로 그대로 사용
+            # 다만, positive_i가 scores_tensor의 열 인덱스 범위를 벗어나지 않도록 확인
             
             return interaction, scores, positive_u, positive_i
 
