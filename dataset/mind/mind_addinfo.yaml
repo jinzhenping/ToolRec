@@ -1,0 +1,84 @@
+# MIND 데이터셋 Attribute-Oriented Retrieval Tool 설정 파일
+# SASRec_AddInfo 모델을 사용하여 속성 기반 검색 도구 구축
+
+# 데이터셋 기본 정보
+field_separator: "\t"
+seq_separator: " "
+USER_ID_FIELD: user_id
+ITEM_ID_FIELD: item_id
+RATING_FIELD: rating
+TIME_FIELD: timestamp
+
+# 순차 추천 모델을 위한 설정
+NEG_PREFIX: neg_
+ITEM_LIST_LENGTH_FIELD: item_length
+LIST_SUFFIX: _list
+MAX_ITEM_LIST_LENGTH: 50
+POSITION_FIELD: position_id
+
+# 로드할 컬럼 설정
+load_col:
+    inter: ['user_id', 'item_id', 'rating', 'timestamp']
+    user: ['user_id']
+    item: ['item_id', 'title', 'category', 'subcategory']
+
+# 데이터 경로
+data_path: ./dataset
+
+# 학습 설정
+learner: adam
+learning_rate: 0.001
+epochs: 300
+train_batch_size: 256
+eval_batch_size: 256
+
+# Loss 설정
+loss_type: 'CE'
+
+# Benchmark 파일 사용
+benchmark_filename: ['train', 'test']
+
+# 평가 설정
+eval_args:
+    group_by: user
+    order: TO
+    split: {'RS': [0.9, 0.1]}
+    mode: 
+        valid: full
+        test: labeled
+
+# 메트릭 설정
+metrics: ['Recall', 'NDCG', 'MRR', 'Hit']
+topk: [1, 5]
+valid_metric: Recall@5
+valid_metric_bigger: True
+
+# Negative sampling 비활성화
+train_neg_sample_args: ~
+
+# 조기 종료
+stopping_step: 20
+
+# 체크포인트
+checkpoint_dir: ./dataset/saved_file
+
+# GPU 설정
+use_gpu: True
+gpu_id: 1
+
+# 시드 설정
+seed: 2023
+reproducibility: True
+
+# Pretrained 모델 로드
+load_pretrain: True
+pretrained_name: /SASRec-Nov-10-2025_16-08-05.pth
+
+# Attribute-Oriented Retrieval Tool 설정
+freeze_Rec_Params: True  # 기본 추천 모델 파라미터 고정
+item_additional_usage: True  # 아이템 추가 속성 사용
+item_additional_feature: category  # 사용할 속성 (category, subcategory 등)
+side_feature_size: 100  # 사이드 피처 임베딩 크기
+bert_usage: True  # BERT 임베딩 사용 여부
+freeze_side_feature: False  # 사이드 피처 임베딩 학습 허용
+

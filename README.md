@@ -123,6 +123,33 @@ If you have any questions, feel free to contact via email:
 # 기본 학습 (설정 파일에 gpu_id: 1이 이미 포함되어 있음)
 python run_recbole.py --model=SASRec --dataset=mind --config_files=dataset/mind/mind.yaml
 
+# 카테고리 기반 검색 도구 학습습
+python run_recbole.py \
+  --dataset=mind \
+  --model=SASRec_AddInfo2 \
+  --config_files=dataset/mind/mind_addinfo.yaml \
+  --gpu_id=1 \
+  --show_progress=False \
+  --load_pretrain=True \
+  --freeze_Rec_Params=True \
+  --item_additional_usage=True \
+  --item_additional_feature=category \
+  --side_feature_size=100 \
+  --bert_usage=True \
+  --pretrained_name=/SASRec-Nov-10-2025_16-08-05.pth
 
-
-
+# 서브카테고리 기반 검색 도구 학습
+python run_recbole.py \
+  --dataset=mind \
+  --model=SASRec_AddInfo2 \
+  --config_files=dataset/mind/mind_addinfo.yaml \
+  --gpu_id=1 \
+  --show_progress=False \
+  --load_pretrain=True \
+  --freeze_Rec_Params=True \
+  --item_additional_usage=True \
+  --item_additional_feature=subcategory \
+  --side_feature_size=100 \
+  --bert_usage=True \
+  --pretrained_name=/SASRec-Nov-10-2025_16-08-05.pth
+  

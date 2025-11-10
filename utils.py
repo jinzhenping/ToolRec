@@ -4,7 +4,7 @@ import torch
 from recbole.evaluator import Evaluator, Collector
 
 
-dataset_name="ml-1m"
+dataset_name="mind"  # MIND 데이터셋 사용
 test_version="test/"
 
 backbone_model="SASRec"
@@ -27,6 +27,11 @@ model_file_dict = {
             'city': 'SASRec_AddInfo2-XXXX.pth',
             'stars': 'SASRec_AddInfo2-XXXX.pth',
             'categories': 'SASRec_AddInfo2-XXXX.pth',
+        },
+        'mind': {
+            'None': 'SASRec-Nov-10-2025_16-08-05.pth',  # 기본 모델
+            'category': 'SASRec_AddInfo2-category-XXXX.pth',  # 카테고리 기반 검색 도구
+            'subcategory': 'SASRec_AddInfo2-subcategory-XXXX.pth',  # 서브카테고리 기반 검색 도구
         }},
     'BERT4Rec': {
         'ml-1m': {
