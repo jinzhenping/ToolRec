@@ -39,7 +39,7 @@ ffmpy==0.3.1
 filelock 
 fonttools==4.25.0
 frozenlist 
-git+https://github.com/lm-sys/FastChat.git#egg=fastchat
+
 fsspec==2023.6.0
 future==0.18.2
 google-auth 
