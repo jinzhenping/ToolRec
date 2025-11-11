@@ -85,7 +85,33 @@ num_user = len(uid_iid)
 import time
 import random
 import logging
-logging.basicConfig(filename='./trajs/828.log', level=logging.DEBUG)
+
+# 로깅 설정: reentrant call 방지를 위해 안전하게 설정
+os.makedirs('./trajs', exist_ok=True)
+
+# OpenAI 및 httpcore의 로깅 레벨을 WARNING으로 설정하여 디버그 로그 비활성화
+logging.getLogger("openai").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# 메인 로거 설정
+logger = logging.getLogger()
+logger.setLevel(logging.DEBUG)
+
+# 기존 핸들러 제거
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
+
+# 파일 핸들러 추가 (thread-safe)
+try:
+    file_handler = logging.FileHandler('./trajs/828.log', mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+except Exception as e:
+    # 로깅 설정 실패 시 무시하고 계속 진행
+    print(f"Warning: Could not set up logging: {e}")
 
 
 reward_s = []
