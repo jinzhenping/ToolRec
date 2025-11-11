@@ -136,7 +136,12 @@ def dump_userInfo_chat(test_v, dataset, test_data, his_len=10):
             uid_iid_hisScore[u_token] = iid_hisScore[:i_len]
     
     users = list(uid_iid.keys())
-    sampled_users = random.sample(users, 200)
+    # 사용자 수가 200명보다 적으면 전체 사용자 사용, 그렇지 않으면 200명 샘플링
+    sample_size = min(200, len(users))
+    if sample_size < len(users):
+        sampled_users = random.sample(users, sample_size)
+    else:
+        sampled_users = users
     uid_iid_small = {u: uid_iid[u] for u in sampled_users}
     uid_iid_his_small = {u: uid_iid_his[u] for u in sampled_users}
     uid_iid_hisScore_small = {u: uid_iid_hisScore[u] for u in sampled_users}
