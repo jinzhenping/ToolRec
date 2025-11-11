@@ -133,7 +133,10 @@ class Dataset(torch.utils.data.Dataset):
         # load user his 
         # user_his_path = './dataset/prompts/' + self.dataset_name + '_uid_dict.pkl'
         # pattern_path = './dataset/prompts/' + self.dataset_name + '_pattern.json'
-        test_v = self.config.get('test_v', '')
+        try:
+            test_v = self.config['test_v']
+        except (KeyError, AttributeError):
+            test_v = ''
         if test_v and not test_v.endswith('/'):
             test_v = test_v + '/'
         user_his_path = './dataset/prompts/' + test_v + self.dataset_name + '_uid_dict.pkl'
@@ -204,13 +207,21 @@ class Dataset(torch.utils.data.Dataset):
                     user_info = user_info + item_inter
                 user_profile[uid] = user_description + user_info
 
-        test_v = self.config.get('test_v', '')
+        try:
+            test_v = self.config['test_v']
+        except (KeyError, AttributeError):
+            test_v = ''
         if test_v and not test_v.endswith('/'):
             test_v = test_v + '/'
         file_path = './dataset/prompts/' + test_v + self.dataset_name + '_chat.pkl'
         with open(file_path, 'wb') as f:
             pickle.dump((uid_iid, user_profile, item_profile, itemID_name), f)
-        raise KeyboardInterrupt
+        
+        logger = self.logger
+        logger.info(f"Successfully created {file_path}")
+        logger.info(f"Total users: {len(uid_iid)}, Total items: {len(item_profile)}")
+        import sys
+        sys.exit(0)
     
     def save_split_dataset(self, split=None, topK=1):
         split_save_path = self.dataset_path + "/" + self.dataset_name + "_" + split + ".inter"

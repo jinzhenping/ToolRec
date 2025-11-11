@@ -162,7 +162,12 @@ def dump_userInfo_chat(test_v, dataset, test_data, his_len=10):
     token_path = './dataset/prompts/' + test_v + dataset + '_ui_token.pkl'
     with open(token_path, 'wb') as f:
         pickle.dump((user_token_id, user_id_token, item_token_id, item_id_token), f)
-    raise KeyboardInterrupt
+    
+    logger = getLogger()
+    logger.info(f"Successfully created {file_path}")
+    logger.info(f"Successfully created {token_path}")
+    logger.info(f"Total users processed: {len(sampled_users)}")
+    sys.exit(0)
     
 
 
