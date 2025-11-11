@@ -1,36 +1,60 @@
 import openai
 import argparse
 
-
+# OpenAI API 버전 호환성 처리
+try:
+    # openai >= 1.0.0
+    from openai import OpenAI
+    _openai_v1 = True
+except ImportError:
+    # openai < 1.0.0
+    _openai_v1 = False
 
 def llm_chat(User_message, stop='12'):
-    openai.api_key = ""
-    openai.api_base = "https://api.openai.com/v1"
-
     if len(stop) < 3:
-        stop=None
+        stop = None
     else:
         stop = [stop]
+    
     our_messages = [
         {'role': 'user', 'content': User_message}
     ]
-    if stop:
-        response = openai.ChatCompletion.create(
-            #model='gpt-3.5-turbo',
-            # model='gpt-3.5-turbo-16k',
-            model='gpt-4o-mini', # test
-            messages=our_messages,
-            stop=stop
+    
+    if _openai_v1:
+        # OpenAI API 1.0.0+ 사용
+        client = OpenAI(
+            api_key="",  # API 키 설정 필요
+            base_url="https://api.openai.com/v1"
         )
+        if stop:
+            response = client.chat.completions.create(
+                model='gpt-4o-mini',
+                messages=our_messages,
+                stop=stop
+            )
+        else:
+            response = client.chat.completions.create(
+                model='gpt-4o-mini',
+                messages=our_messages
+            )
+        llm_response = response.choices[0].message.content
     else:
-        response = openai.ChatCompletion.create(
-            #model='gpt-3.5-turbo',
-            # model='gpt-3.5-turbo-16k',
-            model='gpt-4o-mini', # test
-            messages=our_messages
-        )
-    llm_response =  response['choices'][0]['message'].to_dict()['content']
-    #return r"{0}".format(repr(llm_response)[1:-1])
+        # OpenAI API < 1.0.0 사용
+        openai.api_key = ""
+        openai.api_base = "https://api.openai.com/v1"
+        if stop:
+            response = openai.ChatCompletion.create(
+                model='gpt-4o-mini',
+                messages=our_messages,
+                stop=stop
+            )
+        else:
+            response = openai.ChatCompletion.create(
+                model='gpt-4o-mini',
+                messages=our_messages
+            )
+        llm_response = response['choices'][0]['message'].to_dict()['content']
+    
     return llm_response
 
 

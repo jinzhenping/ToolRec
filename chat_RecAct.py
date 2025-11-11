@@ -21,6 +21,7 @@ def step(env, action):
 
 import json
 import sys
+import os
 import pickle
 import argparse
 from utils import *
@@ -121,6 +122,10 @@ for uid in uid_iid.keys():
         print("An error occurred:", str(e))
         print("OHHHHHHHH... User {user} Failed. Failed_times is {fail}".format(user=uid, fail=failed_times))
 
+
+# 결과 저장 디렉토리 생성
+output_dir = f"chat_his/{dataset_name}"
+os.makedirs(output_dir, exist_ok=True)
 
 with open("chat_his/{dataset}/start_{st}.json".format(dataset=dataset_name, st=args.start), 'w') as f:   
     json.dump(infos, f)
