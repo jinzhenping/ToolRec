@@ -170,7 +170,7 @@ def evaluate_user(user_id, pos_item, user_topK, user_num, item_num):
     config = {}
     config["metric_decimal_place"] = 4
     config['metrics'] = ['Recall', 'MRR', 'NDCG', 'Hit', 'Precision']
-    config['topk'] = [10]
+    config['topk'] = [1, 5, 10]  # HIT@1, MRR@5, nDCG@5, 그리고 기존 @10 메트릭 포함
     evaluator = Evaluator(config)
 
     result = evaluator.evaluate(data_struct)

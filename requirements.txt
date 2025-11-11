@@ -85,7 +85,7 @@ nest-asyncio
 networkx==2.8.6
 nh3==0.2.14
 numexpr 
-numpy 
+numpy<2.0.0 
 nvidia-cublas-cu11==11.10.3.66
 nvidia-cuda-cupti-cu11==11.7.101
 nvidia-cuda-nvrtc-cu11==11.7.99
