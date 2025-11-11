@@ -781,7 +781,7 @@ class Dataset(torch.utils.data.Dataset):
                 elif ftype == FeatureType.FLOAT:
                     feat[field] = feat[field].fillna(value=feat[field].mean())
                 else:
-                    dtype = np.int64 if ftype == FeatureType.TOKEN_SEQ else np.float
+                    dtype = np.int64 if ftype == FeatureType.TOKEN_SEQ else np.float64
                     feat[field] = feat[field].apply(
                         lambda x: np.array([], dtype=dtype)
                         if isinstance(x, float)
@@ -2412,7 +2412,7 @@ class Dataset(torch.utils.data.Dataset):
             if ftype == FeatureType.TOKEN:
                 if self.bert_usage and k == self.item_additional_feature:
                     value[0] = np.zeros(value[1].shape)
-                    value = np.vstack(value).astype(np.float)
+                    value = np.vstack(value).astype(np.float64)
                     new_data[k] = torch.from_numpy(value).float()
                     continue
                 new_data[k] = torch.LongTensor(value)
