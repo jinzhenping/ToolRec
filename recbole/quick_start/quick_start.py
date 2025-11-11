@@ -142,7 +142,9 @@ def dump_userInfo_chat(test_v, dataset, test_data, his_len=10):
     uid_iid_hisScore_small = {u: uid_iid_hisScore[u] for u in sampled_users}
 
     # file_path = './dataset/prompts/' + dataset + '_uid_dict.pkl'
-    file_path = './dataset/prompts/' + test_v + '/' + dataset + '_uid_dict.pkl'
+    if test_v and not test_v.endswith('/'):
+        test_v = test_v + '/'
+    file_path = './dataset/prompts/' + test_v + dataset + '_uid_dict.pkl'
     # with open(file_path, 'wb') as f:
     #     pickle.dump((uid_iid, uid_iid_his, uid_iid_hisScore), f)
     with open(file_path, 'wb') as f:
@@ -152,7 +154,7 @@ def dump_userInfo_chat(test_v, dataset, test_data, his_len=10):
     user_id_token = test_data.dataset.field2id_token['user_id']
     item_id_token = test_data.dataset.field2id_token['item_id']
 
-    token_path = './dataset/prompts/' + test_v + '/' + dataset + '_ui_token.pkl'
+    token_path = './dataset/prompts/' + test_v + dataset + '_ui_token.pkl'
     with open(token_path, 'wb') as f:
         pickle.dump((user_token_id, user_id_token, item_token_id, item_id_token), f)
     raise KeyboardInterrupt

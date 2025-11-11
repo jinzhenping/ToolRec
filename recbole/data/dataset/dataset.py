@@ -133,7 +133,10 @@ class Dataset(torch.utils.data.Dataset):
         # load user his 
         # user_his_path = './dataset/prompts/' + self.dataset_name + '_uid_dict.pkl'
         # pattern_path = './dataset/prompts/' + self.dataset_name + '_pattern.json'
-        user_his_path = './dataset/prompts/' + self.config['test_v'] + '/' + self.dataset_name + '_uid_dict.pkl'
+        test_v = self.config.get('test_v', '')
+        if test_v and not test_v.endswith('/'):
+            test_v = test_v + '/'
+        user_his_path = './dataset/prompts/' + test_v + self.dataset_name + '_uid_dict.pkl'
         pattern_path = './dataset/prompts/' + self.dataset_name + '_pattern.json'
 
         with open(user_his_path, 'rb') as f:
@@ -201,7 +204,10 @@ class Dataset(torch.utils.data.Dataset):
                     user_info = user_info + item_inter
                 user_profile[uid] = user_description + user_info
 
-        file_path = './dataset/prompts/' + self.config['test_v'] + '/' + self.dataset_name + '_chat.pkl'
+        test_v = self.config.get('test_v', '')
+        if test_v and not test_v.endswith('/'):
+            test_v = test_v + '/'
+        file_path = './dataset/prompts/' + test_v + self.dataset_name + '_chat.pkl'
         with open(file_path, 'wb') as f:
             pickle.dump((uid_iid, user_profile, item_profile, itemID_name), f)
         raise KeyboardInterrupt

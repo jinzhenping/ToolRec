@@ -164,17 +164,18 @@ python run_recbole.py \
   --dataset=mind \
   --model=SASRec \
   --config_files=dataset/mind/mind.yaml \
-  --gpu_id=1 \
-  --dump_userInfo_chat=True \
-  --test_v=test/
+  --gpu_id=0 \
+  --dump_to_chat=True \
+  --test_v=test \
+  --chat_hislen=10
 
 # 사용자/아이템 프로필 생성
 python run_recbole.py \
   --dataset=mind \
   --model=SASRec \
   --config_files=dataset/mind/mind.yaml \
-  --gpu_id=1 \
+  --gpu_id=0 \
   --dump_profile=True \
-  --test_v=test/
+  --test_v=test
 
 python chat_RecAct.py --start=0 --step_num=100
