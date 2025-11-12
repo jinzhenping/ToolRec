@@ -123,14 +123,42 @@ class RecEnv(gym.Env):
                         # <42208>, Bold predictions..., 7.5 형식 파싱
                         id_matches = re.findall(r'<(\d+)>', reranked_result)
                         if id_matches and len(id_matches) >= topK:
-                            # 아이템 ID 리스트로 재구성
+                            # 외부 ID를 내부 ID로 변환 시도 (필요한 경우)
+                            # 먼저 외부 ID 그대로 사용 시도
+                            # 만약 실패하면 내부 ID로 변환
                             reranked_result = '[' + '\n'.join([f"<{item_id}>" for item_id in id_matches[:topK]]) + ']'
                     
                     if not reranked_result.startswith("["):
                         reranked_result = '[' + reranked_result + ']'
 
-                # LLM 응답이 제목만 반환한 경우, 이전 결과에서 아이템 ID 매핑 시도
+                # LLM 응답 검증 및 외부 ID -> 내부 ID 변환 시도
                 if reranked_result and not extract_and_check_cur_user_reclist(reranked_result, topk=topK):
+                    # 외부 ID를 내부 ID로 변환 시도
+                    import re
+                    id_matches = re.findall(r'<(\d+)>', reranked_result)
+                    if id_matches and len(id_matches) >= topK:
+                        # item_id_token을 사용하여 외부 ID -> 내부 ID 변환
+                        try:
+                            from utils import item_id_token
+                            internal_ids = []
+                            for ext_id in id_matches[:topK]:
+                                # item_id_token은 외부 ID -> 내부 ID 매핑
+                                if ext_id in item_id_token:
+                                    internal_ids.append(str(item_id_token[ext_id]))
+                                else:
+                                    # item_id_token에 없으면 외부 ID 그대로 사용
+                                    internal_ids.append(ext_id)
+                            
+                            if len(internal_ids) >= topK:
+                                # 내부 ID로 재구성
+                                reranked_result_internal = '[' + '\n'.join([f"<{item_id}>" for item_id in internal_ids[:topK]]) + ']'
+                                if extract_and_check_cur_user_reclist(reranked_result_internal, topk=topK):
+                                    print(f"  [정보] 외부 ID를 내부 ID로 변환 성공")
+                                    reranked_result = reranked_result_internal
+                                    break
+                        except Exception as e:
+                            print(f"  [경고] ID 변환 시도 중 오류: {str(e)}")
+                    
                     # 이전 rec_traj에서 아이템 리스트 가져오기
                     previous_items = None
                     for line in reversed(self.rec_traj):
