@@ -154,8 +154,9 @@ old_time = time.time
 failed_times = 0
 flag_run = 1
 u_num = 0
-
-
+total_users_processed = 0  # 전체 처리 시도한 사용자 수
+successful_users = 0  # 성공한 사용자 수
+failed_users = 0  # 실패한 사용자 수
 
 infos = []
 save_interval = 10  # 10명마다 중간 저장 및 메모리 정리
@@ -169,6 +170,7 @@ for uid in uid_iid.keys():
     if u_num > args.start + args.step_num:
         break
 
+    total_users_processed += 1
 
     try: 
         start_time = time.time()
@@ -176,6 +178,7 @@ for uid in uid_iid.keys():
         r, info = task_customization(uid, to_print=True)
         elapsed_time = time.time() - start_time
         infos.append(info)
+        successful_users += 1
         print('steps, \t recsys_steps, \t llm_steps, \t answer')
         logging.info('steps {step}, \t recsys_steps {recsys_steps}, \t llm_steps {llm_steps}, \n answer {answer} \n trajectory {traj}'.format(step=info['steps'], recsys_steps=info['recsys_steps'], llm_steps=info['llm_steps'], answer=info['answer'], traj=info['rec_traj']))
         print(f'[완료] User {uid} 처리 완료 (소요 시간: {elapsed_time:.2f}초)')
@@ -198,6 +201,7 @@ for uid in uid_iid.keys():
             
     except Exception as e:
         failed_times += 1
+        failed_users += 1
         elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
         # Print the details of the exception
         print(f"[오류] User {uid} 처리 실패 (소요 시간: {elapsed_time:.2f}초)")
@@ -220,6 +224,11 @@ with open("chat_his/{dataset}/start_{st}.json".format(dataset=dataset_name, st=a
 print("\n" + "="*50)
 print("성능 평가 시작...")
 print("="*50)
+print(f"[통계] 전체 테스트 사용자: {total_users_processed}명")
+print(f"[통계] 성공한 사용자: {successful_users}명")
+print(f"[통계] 실패한 사용자: {failed_users}명")
+print(f"[통계] infos에 저장된 사용자: {len(infos)}명")
+print("="*50)
 
 try:
     from utils import evaluate_user, item_token_id, user_token_id, user_id_token, uid_iid
@@ -240,12 +249,14 @@ try:
     uid_topK = {}
     valid_count = 0
     invalid_count = 0
+    no_user_idx_count = 0  # user_idx가 없는 경우
     
     for info in infos:
         # user_idx 또는 user_id 필드 확인
         user_idx = str(info.get('user_idx', '')) or str(info.get('user_id', ''))
         if not user_idx:
             # info에 user_id가 없으면 스킵 (이론적으로는 있어야 함)
+            no_user_idx_count += 1
             print(f"경고: user_idx/user_id가 없는 info 발견: {list(info.keys())}")
             continue
             
@@ -365,12 +376,20 @@ try:
             if extracted_items:
                 print(f"  [경고] 사용자 {user_idx}: 추출된 아이템이 {len(extracted_items)}개뿐 (필요: 10개)")
     
-    print(f"전체 사용자: {len(infos)}, 유효한 추천: {valid_count}, 무효한 추천: {invalid_count}")
+    print(f"\n[1단계: 추천 리스트 추출]")
+    print(f"  - infos에서 처리한 사용자: {len(infos)}명")
+    print(f"  - user_idx 없는 사용자: {no_user_idx_count}명")
+    print(f"  - 추천 리스트 추출 성공: {valid_count}명 (10개 이상 아이템)")
+    print(f"  - 추천 리스트 추출 실패: {invalid_count}명 (10개 미만 또는 없음)")
     
     if len(uid_topK) == 0:
-        print("경고: 평가할 유효한 추천 리스트가 없습니다.")
+        print("\n경고: 평가할 유효한 추천 리스트가 없습니다.")
+        print(f"  - 전체 테스트 사용자: {total_users_processed}명")
+        print(f"  - 성공한 사용자: {successful_users}명")
+        print(f"  - 최종 평가 가능 사용자: 0명")
     else:
         # 아이템 ID 검증 및 필터링
+        print(f"\n[2단계: 아이템 ID 검증]")
         count_out_index = 0
         uid_topK_filtered = {}
         sample_uid = None
@@ -408,10 +427,13 @@ try:
                 if len(valid_items) > 0:
                     print(f"  [경고] 사용자 {uid}: 유효한 아이템이 {len(valid_items)}개뿐 (필요: 10개)")
         
-        print(f"아이템 ID 검증 후: 유효 {len(uid_topK_filtered)}명, 제외 {count_out_index}명")
+        print(f"  - 검증 전 사용자: {len(uid_topK)}명")
+        print(f"  - 검증 후 유효 사용자: {len(uid_topK_filtered)}명 (10개 이상 유효 아이템)")
+        print(f"  - 검증 후 제외 사용자: {count_out_index}명 (10개 미만 유효 아이템)")
         
         if len(uid_topK_filtered) > 0:
             # 사용자 및 아이템 ID 매핑
+            print(f"\n[3단계: ID 매핑]")
             pos_user_before_map = [user_token_id[uid] for uid in uid_topK_filtered.keys() if uid in user_token_id]
             pos_user_before_map.sort()
             pos_user_list_str = [user_id_token[uid] for uid in pos_user_before_map]
@@ -427,18 +449,32 @@ try:
             pos_item_list = pos_item_list[:min_len]
             topk_idx_list = topk_idx_list[:min_len]
             
+            print(f"  - ID 매핑 후 사용자: {min_len}명")
+            
             # topk_idx_list의 각 항목이 10개인지 확인
+            print(f"\n[4단계: 최종 필터링 (10개 아이템 확인)]")
             topk_idx_list_filtered = []
             pos_user_list_filtered = []
             pos_item_list_filtered = []
+            count_less_than_10 = 0
             for i, topk in enumerate(topk_idx_list):
                 if len(topk) == 10:
                     topk_idx_list_filtered.append(topk)
                     pos_user_list_filtered.append(pos_user_list[i])
                     pos_item_list_filtered.append(pos_item_list[i])
+                else:
+                    count_less_than_10 += 1
+            
+            print(f"  - 10개 아이템 보유 사용자: {len(topk_idx_list_filtered)}명")
+            print(f"  - 10개 미만 아이템 사용자: {count_less_than_10}명 (제외)")
             
             if len(topk_idx_list_filtered) > 0:
                 # 평가 수행
+                print(f"\n[5단계: 평가 수행]")
+                print(f"  - 최종 평가 대상 사용자: {len(topk_idx_list_filtered)}명")
+                print(f"  - 전체 테스트 사용자: {total_users_processed}명")
+                print(f"  - 평가 비율: {len(topk_idx_list_filtered)}/{total_users_processed} = {len(topk_idx_list_filtered)/total_users_processed*100:.2f}%")
+                
                 chat_eval_result = evaluate_user(
                     pos_user_list_filtered, 
                     pos_item_list_filtered, 
@@ -450,13 +486,27 @@ try:
                 print("\n" + "="*50)
                 print("최종 평가 결과:")
                 print("="*50)
+                print(f"[평가 통계]")
+                print(f"  - 전체 테스트 사용자: {total_users_processed}명")
+                print(f"  - 성공한 사용자: {successful_users}명")
+                print(f"  - 실패한 사용자: {failed_users}명")
+                print(f"  - 최종 평가 대상 사용자: {len(topk_idx_list_filtered)}명")
+                print(f"  - 평가 비율: {len(topk_idx_list_filtered)/total_users_processed*100:.2f}%")
+                print("="*50)
                 for metric, value in chat_eval_result.items():
                     print(f"{metric}: {value:.4f}")
                 print("="*50)
+                print(f"\n[참고] 위 메트릭은 {len(topk_idx_list_filtered)}명의 사용자에 대해 계산되었습니다.")
+                print(f"      전체 {total_users_processed}명 중 {total_users_processed - len(topk_idx_list_filtered)}명은 평가에서 제외되었습니다.")
+                print("="*50)
             else:
-                print("경고: 유효한 추천 리스트가 없습니다 (각 리스트가 10개 아이템을 포함해야 함).")
+                print("\n경고: 유효한 추천 리스트가 없습니다 (각 리스트가 10개 아이템을 포함해야 함).")
+                print(f"  - 전체 테스트 사용자: {total_users_processed}명")
+                print(f"  - 최종 평가 가능 사용자: 0명")
         else:
-            print("경고: 평가할 유효한 추천 리스트가 없습니다.")
+            print("\n경고: 평가할 유효한 추천 리스트가 없습니다.")
+            print(f"  - 전체 테스트 사용자: {total_users_processed}명")
+            print(f"  - 최종 평가 가능 사용자: 0명")
             
 except Exception as e:
     print(f"평가 중 오류 발생: {str(e)}")
