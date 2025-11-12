@@ -399,6 +399,29 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                 except Exception as e:
                     print(f"[경고] field2token_id 변환 실패: {str(e)}")
             
+            # item_feat[condition]이 Tensor나 numpy array인 경우 pandas Series로 변환
+            condition_series = item_feat[condition]
+            if isinstance(condition_series, torch.Tensor):
+                condition_series = pd.Series(condition_series.cpu().numpy())
+            elif isinstance(condition_series, np.ndarray):
+                condition_series = pd.Series(condition_series)
+            elif not isinstance(condition_series, pd.Series):
+                # 다른 타입인 경우 pandas Series로 변환 시도
+                try:
+                    condition_series = pd.Series(condition_series)
+                except Exception as e:
+                    print(f"[경고] condition_series를 pandas Series로 변환 실패: {str(e)}")
+                    # 일반 검색으로 대체
+                    topk_score, topk_iid_list = full_sort_topk(
+                        uid_series, model, test_data, k=topK, device=config["device"]
+                    )
+                    external_item_list = dataset_obj.id2token(dataset_obj.iid_field, topk_iid_list.cpu())
+                    external_item_list_name = []
+                    for u_list in external_item_list:
+                        external_item_list_name.append([itemID_name.get(iid, '') for iid in u_list])
+                    external_item_list_name = np.array(external_item_list_name)
+                    return topk_score, external_item_list, external_item_list_name
+            
             def matches_attribute(row_value, target_value, target_id=None):
                 """속성 값 매칭 (리스트, 문자열 모두 지원)"""
                 normalized_target = _normalize_attribute_value(target_value)
@@ -427,7 +450,7 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                     return _normalize_attribute_value(str(row_value)) == normalized_target
             
             # 필터링 적용
-            mask = item_feat[condition].apply(lambda x: matches_attribute(x, attribute_value, target_internal_id))
+            mask = condition_series.apply(lambda x: matches_attribute(x, attribute_value, target_internal_id))
             filtered_items = item_feat[mask]
             
             if len(filtered_items) > 0:
