@@ -470,23 +470,60 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                 try:
                     # pandas Series의 .values 속성 사용
                     iid_series = filtered_items[dataset_obj.iid_field]
-                    iid_values = iid_series.values
-                    # values가 callable인 경우 (함수 객체인 경우) 처리
-                    if callable(iid_values):
-                        print(f"[경고] iid_series.values가 메서드입니다. to_numpy()를 사용합니다.")
-                        filtered_iids = iid_series.to_numpy().tolist()
+                    
+                    # iid_series가 Tensor인 경우 처리
+                    if isinstance(iid_series, torch.Tensor):
+                        filtered_iids = iid_series.cpu().numpy().tolist()
+                    elif isinstance(iid_series, np.ndarray):
+                        filtered_iids = iid_series.tolist()
                     else:
-                        filtered_iids = iid_values.tolist()
-                except (AttributeError, TypeError) as e:
-                    # .values가 없는 경우 또는 오류 발생 시
-                    print(f"[경고] iid_series.values 접근 실패: {str(e)}. to_numpy()를 시도합니다.")
-                    if hasattr(filtered_items[dataset_obj.iid_field], 'to_numpy'):
-                        filtered_iids = filtered_items[dataset_obj.iid_field].to_numpy().tolist()
-                    else:
-                        filtered_iids = list(filtered_items[dataset_obj.iid_field])
+                        # pandas Series인 경우
+                        try:
+                            iid_values = iid_series.values
+                            # values가 callable인 경우 (함수 객체인 경우) 처리
+                            if callable(iid_values):
+                                print(f"[경고] iid_series.values가 메서드입니다. 대체 방법을 시도합니다.")
+                                if hasattr(iid_series, 'to_numpy'):
+                                    filtered_iids = iid_series.to_numpy().tolist()
+                                else:
+                                    filtered_iids = list(iid_series)
+                            else:
+                                filtered_iids = iid_values.tolist()
+                        except (AttributeError, TypeError) as e:
+                            # .values가 없는 경우 또는 오류 발생 시
+                            print(f"[경고] iid_series.values 접근 실패: {str(e)}. 대체 방법을 시도합니다.")
+                            if hasattr(iid_series, 'to_numpy'):
+                                filtered_iids = iid_series.to_numpy().tolist()
+                            else:
+                                filtered_iids = list(iid_series)
+                except Exception as e:
+                    # 모든 방법 실패 시
+                    print(f"[경고] iid_series 추출 실패: {str(e)}. 직접 접근을 시도합니다.")
+                    filtered_iids = list(filtered_items[dataset_obj.iid_field])
+                
+                # filtered_iids를 문자열로 변환 (token2id는 문자열을 기대)
+                filtered_iids_str = [str(iid) for iid in filtered_iids]
                 
                 # 외부 ID를 내부 ID로 변환
-                filtered_iid_internal = dataset_obj.token2id(dataset_obj.iid_field, filtered_iids)
+                try:
+                    filtered_iid_internal = dataset_obj.token2id(dataset_obj.iid_field, filtered_iids_str)
+                except Exception as e:
+                    print(f"[경고] token2id 변환 실패: {str(e)}. filtered_iids가 이미 내부 ID일 수 있습니다.")
+                    # filtered_iids가 이미 내부 ID인 경우 (정수 리스트)
+                    try:
+                        filtered_iid_internal = np.array([int(iid) for iid in filtered_iids])
+                    except (ValueError, TypeError):
+                        print(f"[오류] filtered_iids를 내부 ID로 변환할 수 없습니다: {filtered_iids[:5]}")
+                        # 일반 검색으로 대체
+                        topk_score, topk_iid_list = full_sort_topk(
+                            uid_series, model, test_data, k=topK, device=config["device"]
+                        )
+                        external_item_list = dataset_obj.id2token(dataset_obj.iid_field, topk_iid_list.cpu())
+                        external_item_list_name = []
+                        for u_list in external_item_list:
+                            external_item_list_name.append([itemID_name.get(iid, '') for iid in u_list])
+                        external_item_list_name = np.array(external_item_list_name)
+                        return topk_score, external_item_list, external_item_list_name
                 
                 if len(filtered_iid_internal) > 0:
                     # 필터링된 아이템에 대한 점수만 선택
