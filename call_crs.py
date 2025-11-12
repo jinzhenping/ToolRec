@@ -34,18 +34,89 @@ def _get_valid_attribute_values(dataset_obj, condition):
     if cache_key not in _attribute_values_cache:
         valid_values = set()
         
-        if dataset_obj.item_feat is not None and condition in dataset_obj.item_feat.columns:
-            # 모든 유효한 속성 값 추출
-            for value in dataset_obj.item_feat[condition].values:
-                if isinstance(value, list):
-                    # 리스트인 경우 각 항목 추가
-                    for item in value:
-                        if pd.notna(item) and str(item).strip():
-                            valid_values.add(str(item).strip().lower())
-                else:
-                    # 단일 값인 경우
-                    if pd.notna(value) and str(value).strip():
-                        valid_values.add(str(value).strip().lower())
+        if dataset_obj.item_feat is not None:
+            try:
+                # item_feat를 pandas DataFrame으로 변환
+                item_feat_df = dataset_obj.item_feat
+                
+                # 타입 확인 및 디버깅
+                if not hasattr(item_feat_df, 'columns'):
+                    print(f"[디버깅] item_feat 타입: {type(item_feat_df)}")
+                    print(f"[디버깅] item_feat 속성: {dir(item_feat_df)[:10]}")
+                    # Interaction 객체인 경우 처리
+                    if hasattr(item_feat_df, 'interaction'):
+                        # Interaction 객체를 pandas DataFrame으로 변환
+                        import pandas as pd
+                        item_dict = {}
+                        for key in item_feat_df.interaction.keys():
+                            val = item_feat_df.interaction[key]
+                            if hasattr(val, 'numpy'):
+                                item_dict[key] = val.numpy()
+                            elif hasattr(val, 'tolist'):
+                                item_dict[key] = val.tolist()
+                            else:
+                                item_dict[key] = val
+                        item_feat_df = pd.DataFrame(item_dict)
+                
+                if hasattr(item_feat_df, 'columns') and condition in item_feat_df.columns:
+                    # 모든 유효한 속성 값 추출
+                    series = item_feat_df[condition]
+                    
+                    # .values 접근 (pandas Series의 속성)
+                    # pandas Series의 .values는 속성이므로 직접 접근
+                    # 하지만 일부 경우 .values가 메서드로 인식될 수 있으므로 안전하게 처리
+                    try:
+                        # 먼저 .values 속성에 직접 접근 시도
+                        values_attr = getattr(series, 'values', None)
+                        if values_attr is None:
+                            raise AttributeError("values 속성이 없습니다")
+                        
+                        # callable인지 확인 (메서드인 경우)
+                        if callable(values_attr):
+                            print(f"[경고] series.values가 메서드입니다. to_numpy()를 사용합니다.")
+                            values = series.to_numpy()
+                        else:
+                            # 속성인 경우
+                            values = values_attr
+                            
+                            # values가 여전히 callable인지 확인 (이중 체크)
+                            if callable(values):
+                                print(f"[경고] values가 여전히 callable입니다. to_numpy()를 사용합니다.")
+                                values = series.to_numpy()
+                    except (AttributeError, TypeError) as e:
+                        # .values가 없는 경우 또는 오류 발생 시
+                        print(f"[경고] series.values 접근 실패: {str(e)}. to_numpy()를 시도합니다.")
+                        if hasattr(series, 'to_numpy'):
+                            values = series.to_numpy()
+                        else:
+                            values = list(series)
+                    
+                    # values가 iterable인지 확인
+                    try:
+                        iter(values)
+                    except TypeError:
+                        print(f"[경고] values가 iterable이 아닙니다. list()로 변환합니다.")
+                        values = list(series)
+                    
+                    # 최종 안전 체크: values가 callable이면 오류
+                    if callable(values):
+                        print(f"[오류] values가 여전히 callable입니다. list()로 변환합니다.")
+                        values = list(series)
+                    
+                    for value in values:
+                        if isinstance(value, list):
+                            # 리스트인 경우 각 항목 추가
+                            for item in value:
+                                if pd.notna(item) and str(item).strip():
+                                    valid_values.add(str(item).strip().lower())
+                        else:
+                            # 단일 값인 경우
+                            if pd.notna(value) and str(value).strip():
+                                valid_values.add(str(value).strip().lower())
+            except Exception as e:
+                print(f"[경고] 속성 값 추출 중 오류 발생: {str(e)}")
+                import traceback
+                traceback.print_exc()
         
         _attribute_values_cache[cache_key] = valid_values
         print(f"[속성 값 캐시] {condition} 속성의 유효한 값 {len(valid_values)}개 로드됨")
@@ -180,6 +251,24 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
         
         # 아이템 속성 정보 가져오기
         item_feat = dataset_obj.item_feat
+        
+        # item_feat를 pandas DataFrame으로 변환
+        if hasattr(item_feat, 'to_pandas'):
+            # Interaction 객체인 경우
+            item_feat = item_feat.to_pandas()
+        elif not hasattr(item_feat, 'columns'):
+            # pandas DataFrame이 아닌 경우
+            print(f"[경고] item_feat가 pandas DataFrame이 아닙니다. 일반 검색을 수행합니다.")
+            topk_score, topk_iid_list = full_sort_topk(
+                uid_series, model, test_data, k=topK, device=config["device"]
+            )
+            external_item_list = dataset_obj.id2token(dataset_obj.iid_field, topk_iid_list.cpu())
+            external_item_list_name = []
+            for u_list in external_item_list:
+                external_item_list_name.append([itemID_name.get(iid, '') for iid in u_list])
+            external_item_list_name = np.array(external_item_list_name)
+            return topk_score, external_item_list, external_item_list_name
+        
         if condition in item_feat.columns:
             # 속성 값으로 필터링할 아이템 인덱스 찾기
             # MIND 데이터셋의 category/subcategory는 리스트나 문자열일 수 있음
@@ -199,7 +288,23 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
             
             if len(filtered_items) > 0:
                 # 필터링된 아이템의 외부 ID 가져오기
-                filtered_iids = filtered_items[dataset_obj.iid_field].values.tolist()
+                try:
+                    # pandas Series의 .values 속성 사용
+                    iid_series = filtered_items[dataset_obj.iid_field]
+                    iid_values = iid_series.values
+                    # values가 callable인 경우 (함수 객체인 경우) 처리
+                    if callable(iid_values):
+                        print(f"[경고] iid_series.values가 메서드입니다. to_numpy()를 사용합니다.")
+                        filtered_iids = iid_series.to_numpy().tolist()
+                    else:
+                        filtered_iids = iid_values.tolist()
+                except (AttributeError, TypeError) as e:
+                    # .values가 없는 경우 또는 오류 발생 시
+                    print(f"[경고] iid_series.values 접근 실패: {str(e)}. to_numpy()를 시도합니다.")
+                    if hasattr(filtered_items[dataset_obj.iid_field], 'to_numpy'):
+                        filtered_iids = filtered_items[dataset_obj.iid_field].to_numpy().tolist()
+                    else:
+                        filtered_iids = list(filtered_items[dataset_obj.iid_field])
                 
                 # 외부 ID를 내부 ID로 변환
                 filtered_iid_internal = dataset_obj.token2id(dataset_obj.iid_field, filtered_iids)
