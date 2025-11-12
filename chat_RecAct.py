@@ -94,7 +94,7 @@ def task_customization(userID, sys_role=instruction, prompt=task_prompt, to_prin
         obs, r, done, info = step(env, "finish[]")
     if to_print:
         print(info, '\n')
-    info.update({'n_calls': n_calls, 'n_badcalls': n_badcalls, 'traj': prompt})
+    info.update({'n_calls': n_calls, 'n_badcalls': n_badcalls, 'traj': prompt, 'user_idx': userID})
     return r, info
 
 
@@ -201,3 +201,142 @@ os.makedirs(output_dir, exist_ok=True)
 with open("chat_his/{dataset}/start_{st}.json".format(dataset=dataset_name, st=args.start), 'w') as f:   
     json.dump(infos, f)
     print("====  Info Dump Ends ====")
+
+# 성능 평가 수행
+print("\n" + "="*50)
+print("성능 평가 시작...")
+print("="*50)
+
+try:
+    from utils import evaluate_user, item_token_id, user_token_id, user_id_token, uid_iid
+    
+    # MIND 데이터셋의 item_num 설정
+    if dataset_name == 'mind':
+        item_num = len(item_token_id)
+    elif dataset_name == 'yelp':
+        item_num = 45582
+    elif dataset_name == 'ml-1m':
+        item_num = 3884
+    elif dataset_name == 'amazon_book':
+        item_num = 97566
+    else:
+        item_num = len(item_token_id)
+    
+    # 추천 리스트 추출
+    uid_topK = {}
+    valid_count = 0
+    invalid_count = 0
+    
+    for info in infos:
+        # user_idx 또는 user_id 필드 확인
+        user_idx = str(info.get('user_idx', '')) or str(info.get('user_id', ''))
+        if not user_idx:
+            # info에 user_id가 없으면 스킵 (이론적으로는 있어야 함)
+            print(f"경고: user_idx/user_id가 없는 info 발견: {list(info.keys())}")
+            continue
+            
+        # answer에서 추천 리스트 추출
+        answer = info.get('answer', '').strip()
+        if answer:
+            res_tmp = [item.split(', ')[0] for item in answer.split('\n') if item.strip()]
+            if len(res_tmp) >= 10:
+                uid_topK[user_idx] = res_tmp[:10]
+                valid_count += 1
+            else:
+                # rec_traj에서 추천 리스트 추출 시도
+                rec_traj = info.get('rec_traj', [])
+                found = False
+                for tj in reversed(rec_traj):
+                    if isinstance(tj, list) and len(tj) >= 4:
+                        if tj[0] == 'rerank' and str(tj[1]).isnumeric() and int(tj[1]) >= 10:
+                            try:
+                                traj_items = tj[3].strip()
+                                if traj_items.startswith('[') and traj_items.endswith(']'):
+                                    traj_items = traj_items[1:-1].strip()
+                                item_list = [item.split(",")[0].strip() for item in traj_items.split("\n") if item.strip()]
+                                if len(item_list) >= 10:
+                                    uid_topK[user_idx] = item_list[:10]
+                                    valid_count += 1
+                                    found = True
+                                    break
+                            except:
+                                pass
+                if not found:
+                    invalid_count += 1
+        else:
+            invalid_count += 1
+    
+    print(f"전체 사용자: {len(infos)}, 유효한 추천: {valid_count}, 무효한 추천: {invalid_count}")
+    
+    if len(uid_topK) == 0:
+        print("경고: 평가할 유효한 추천 리스트가 없습니다.")
+    else:
+        # 아이템 ID 검증 및 필터링
+        count_out_index = 0
+        uid_topK_filtered = {}
+        for uid in list(uid_topK.keys()):
+            valid_items = []
+            for iid in uid_topK[uid]:
+                if item_token_id.get(iid, 0):
+                    valid_items.append(iid)
+            if len(valid_items) >= 10:
+                uid_topK_filtered[uid] = valid_items[:10]
+            else:
+                count_out_index += 1
+        
+        print(f"아이템 ID 검증 후: 유효 {len(uid_topK_filtered)}명, 제외 {count_out_index}명")
+        
+        if len(uid_topK_filtered) > 0:
+            # 사용자 및 아이템 ID 매핑
+            pos_user_before_map = [user_token_id[uid] for uid in uid_topK_filtered.keys() if uid in user_token_id]
+            pos_user_before_map.sort()
+            pos_user_list_str = [user_id_token[uid] for uid in pos_user_before_map]
+            
+            user_num = len(pos_user_list_str)
+            pos_user_list = list(range(user_num))
+            pos_item_list = [item_token_id[uid_iid[uid]] for uid in pos_user_list_str if uid in uid_iid and uid_iid[uid] in item_token_id]
+            topk_idx_list = [[item_token_id[iid] for iid in uid_topK_filtered[uid] if iid in item_token_id] for uid in pos_user_list_str if uid in uid_topK_filtered]
+            
+            # 리스트 길이 맞추기
+            min_len = min(len(pos_user_list), len(pos_item_list), len(topk_idx_list))
+            pos_user_list = pos_user_list[:min_len]
+            pos_item_list = pos_item_list[:min_len]
+            topk_idx_list = topk_idx_list[:min_len]
+            
+            # topk_idx_list의 각 항목이 10개인지 확인
+            topk_idx_list_filtered = []
+            pos_user_list_filtered = []
+            pos_item_list_filtered = []
+            for i, topk in enumerate(topk_idx_list):
+                if len(topk) == 10:
+                    topk_idx_list_filtered.append(topk)
+                    pos_user_list_filtered.append(pos_user_list[i])
+                    pos_item_list_filtered.append(pos_item_list[i])
+            
+            if len(topk_idx_list_filtered) > 0:
+                # 평가 수행
+                chat_eval_result = evaluate_user(
+                    pos_user_list_filtered, 
+                    pos_item_list_filtered, 
+                    topk_idx_list_filtered, 
+                    len(topk_idx_list_filtered), 
+                    item_num
+                )
+                
+                print("\n" + "="*50)
+                print("최종 평가 결과:")
+                print("="*50)
+                for metric, value in chat_eval_result.items():
+                    print(f"{metric}: {value:.4f}")
+                print("="*50)
+            else:
+                print("경고: 유효한 추천 리스트가 없습니다 (각 리스트가 10개 아이템을 포함해야 함).")
+        else:
+            print("경고: 평가할 유효한 추천 리스트가 없습니다.")
+            
+except Exception as e:
+    print(f"평가 중 오류 발생: {str(e)}")
+    import traceback
+    traceback.print_exc()
+    print("\n수동으로 평가하려면 다음 명령을 실행하세요:")
+    print(f"python chat_analysis.py")
