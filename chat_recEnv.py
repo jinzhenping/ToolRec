@@ -121,6 +121,72 @@ class RecEnv(gym.Env):
                     if not reranked_result.startswith("["):
                         reranked_result = '[' + reranked_result + ']'
 
+                # LLM 응답이 제목만 반환한 경우, 이전 결과에서 아이템 ID 매핑 시도
+                if reranked_result and not extract_and_check_cur_user_reclist(reranked_result, topk=topK):
+                    # 이전 rec_traj에서 아이템 리스트 가져오기
+                    previous_items = None
+                    for line in reversed(self.rec_traj):
+                        if line[0] == 'crs' and len(line) >= 4:
+                            previous_items = line[3]
+                            break
+                    
+                    if previous_items:
+                        # LLM 응답에서 제목 추출
+                        import re
+                        # 제목 패턴 추출 (예: "'One" 'in' 'a' "million'" ...)
+                        title_patterns = re.findall(r"['\"]([^'\"]+)['\"]", reranked_result)
+                        
+                        # 이전 결과에서 아이템 ID와 제목 매핑
+                        previous_lines = str(previous_items).strip('[]').split('\n')
+                        item_id_to_title = {}
+                        for prev_line in previous_lines:
+                            prev_line = prev_line.strip()
+                            if not prev_line:
+                                continue
+                            # <ID>, [title...], score 형식 파싱
+                            id_match = re.search(r'<(\d+)>', prev_line)
+                            if id_match:
+                                item_id = id_match.group(1)
+                                # 제목 부분 추출 (대괄호 안)
+                                title_match = re.search(r'\[(.*?)\]', prev_line)
+                                if title_match:
+                                    title_text = title_match.group(1)
+                                    # 제목 정규화 (공백, 따옴표 제거)
+                                    title_normalized = re.sub(r"['\"]", '', title_text).strip()
+                                    item_id_to_title[item_id] = title_normalized
+                        
+                        # LLM 응답의 제목과 매칭되는 아이템 ID 찾기
+                        matched_ids = []
+                        for title_pattern in title_patterns[:topK]:
+                            title_normalized = re.sub(r"['\"]", '', title_pattern).strip()
+                            # 부분 매칭으로 찾기
+                            for item_id, stored_title in item_id_to_title.items():
+                                if title_normalized.lower() in stored_title.lower() or stored_title.lower() in title_normalized.lower():
+                                    if item_id not in matched_ids:
+                                        matched_ids.append(item_id)
+                                        break
+                        
+                        # 매칭된 아이템 ID로 리스트 재구성
+                        if len(matched_ids) >= topK:
+                            # 이전 결과에서 순서대로 가져오기
+                            final_ids = []
+                            for prev_line in previous_lines:
+                                prev_line = prev_line.strip()
+                                if not prev_line:
+                                    continue
+                                id_match = re.search(r'<(\d+)>', prev_line)
+                                if id_match and id_match.group(1) in matched_ids:
+                                    final_ids.append(id_match.group(1))
+                                    if len(final_ids) >= topK:
+                                        break
+                            
+                            if len(final_ids) >= topK:
+                                # 아이템 ID 리스트를 올바른 형식으로 변환
+                                reranked_result = '[' + '\n'.join([f"<{item_id}>" for item_id in final_ids[:topK]]) + ']'
+                                if extract_and_check_cur_user_reclist(reranked_result, topk=topK):
+                                    print(f"  [정보] LLM 응답에서 제목을 아이템 ID로 매핑 성공")
+                                    break
+                
                 if reranked_result and extract_and_check_cur_user_reclist(reranked_result, topk=topK):
                     break
                 else:
