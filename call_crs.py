@@ -402,13 +402,25 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
             # item_feat[condition]이 Tensor나 numpy array인 경우 pandas Series로 변환
             condition_series = item_feat[condition]
             if isinstance(condition_series, torch.Tensor):
-                condition_series = pd.Series(condition_series.cpu().numpy())
+                numpy_data = condition_series.cpu().numpy()
+                # 1차원으로 변환
+                if numpy_data.ndim > 1:
+                    numpy_data = numpy_data.flatten()
+                condition_series = pd.Series(numpy_data)
             elif isinstance(condition_series, np.ndarray):
+                # 1차원으로 변환
+                if condition_series.ndim > 1:
+                    condition_series = condition_series.flatten()
                 condition_series = pd.Series(condition_series)
             elif not isinstance(condition_series, pd.Series):
                 # 다른 타입인 경우 pandas Series로 변환 시도
                 try:
-                    condition_series = pd.Series(condition_series)
+                    # list나 iterable인 경우
+                    if hasattr(condition_series, '__iter__') and not isinstance(condition_series, str):
+                        condition_list = list(condition_series)
+                        condition_series = pd.Series(condition_list)
+                    else:
+                        condition_series = pd.Series([condition_series])
                 except Exception as e:
                     print(f"[경고] condition_series를 pandas Series로 변환 실패: {str(e)}")
                     # 일반 검색으로 대체
