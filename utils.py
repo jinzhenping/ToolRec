@@ -155,12 +155,11 @@ def extract_and_check_cur_user_reclist(ranked_str, topk=10):
         return 1  # invalid
     
     # 대괄호 제거
-    ranked_str = ranked_str[1:-1] if ranked_str.startswith('[') and ranked_str.endswith(']') else ranked_str
-    res_right = 1  # 1 = invalid, 0 = valid
+    ranked_str_clean = ranked_str[1:-1] if ranked_str.startswith('[') and ranked_str.endswith(']') else ranked_str
     import re
     
     cur_user_reclist = []
-    for item in ranked_str.strip().split('\n'):
+    for item in ranked_str_clean.strip().split('\n'):
         item = item.strip()
         if not item:
             continue
@@ -183,12 +182,25 @@ def extract_and_check_cur_user_reclist(ranked_str, topk=10):
     
     # 길이 검증: 정확히 topk개여야 함
     if len(cur_user_reclist) != topk:
+        # 디버깅: 길이가 맞지 않는 경우
+        print(f"  [디버깅] 추출된 아이템 수: {len(cur_user_reclist)}, 필요: {topk}")
+        if cur_user_reclist:
+            print(f"  [디버깅] 추출된 ID 샘플 (처음 5개): {cur_user_reclist[:5]}")
         return 1  # invalid: 길이가 맞지 않음
     
     # 아이템 ID 검증: 모든 ID가 item_token_id에 있어야 함
+    invalid_ids = []
     for iid in cur_user_reclist:
         if not item_token_id.get(iid, 0):
-            return 1  # invalid: 아이템 ID가 존재하지 않음
+            invalid_ids.append(iid)
+    
+    if invalid_ids:
+        # 디버깅: 유효하지 않은 ID가 있는 경우
+        print(f"  [디버깅] 유효하지 않은 아이템 ID: {invalid_ids[:5]}")
+        # item_token_id에 있는 샘플 키 확인
+        sample_keys = list(item_token_id.keys())[:5]
+        print(f"  [디버깅] item_token_id 샘플 키: {sample_keys}")
+        return 1  # invalid: 아이템 ID가 존재하지 않음
     
     return 0  # valid: 모든 검증 통과
 
