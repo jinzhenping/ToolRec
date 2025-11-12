@@ -243,17 +243,24 @@ class RecEnv(gym.Env):
                             if len(final_ids) >= topK:
                                 # 아이템 ID 리스트를 올바른 형식으로 변환
                                 reranked_result = '[' + '\n'.join([f"<{item_id}>" for item_id in final_ids[:topK]]) + ']'
-                                if extract_and_check_cur_user_reclist(reranked_result, topk=topK):
+                                if extract_and_check_cur_user_reclist(reranked_result, topk=topK) == 0:  # 0=valid
                                     print(f"  [정보] LLM 응답에서 제목을 아이템 ID로 매핑 성공")
                                     break
                 
-                if reranked_result and extract_and_check_cur_user_reclist(reranked_result, topk=topK):
-                    break
+                # 검증 결과 확인 (0=valid, 1=invalid)
+                if reranked_result:
+                    final_validation = extract_and_check_cur_user_reclist(reranked_result, topk=topK)
+                    if final_validation == 0:  # valid
+                        print(f"  [정보] Rerank 응답 검증 성공")
+                        break
+                    else:  # invalid
+                        if attemps < max_attempts:
+                            print(f"  [경고] Rerank 응답 형식 오류 (시도 {attemps}/{max_attempts}), 재시도 중...")
+                            if reranked_result:
+                                print(f"  응답 샘플: {reranked_result[:200]}...")
                 else:
                     if attemps < max_attempts:
-                        print(f"  [경고] Rerank 응답 형식 오류 (시도 {attemps}/{max_attempts}), 재시도 중...")
-                        if reranked_result:
-                            print(f"  응답 샘플: {reranked_result[:200]}...")
+                        print(f"  [경고] Rerank 응답이 비어있음 (시도 {attemps}/{max_attempts}), 재시도 중...")
             except Exception as e:
                 print(f"Rerank API 호출 오류 (시도 {attemps}/{max_attempts}): {str(e)}")
                 if attemps < max_attempts:
@@ -263,7 +270,7 @@ class RecEnv(gym.Env):
                     raise
         
         # 최종 결과가 없으면 이전 결과 재사용
-        if not reranked_result or not extract_and_check_cur_user_reclist(reranked_result, topk=topK):
+        if not reranked_result or extract_and_check_cur_user_reclist(reranked_result, topk=topK) != 0:  # 0=valid
             print(f"  [경고] Rerank 실패: 이전 추천 리스트 재사용")
             # 이전 rec_traj에서 마지막 유효한 리스트 찾기
             for line in reversed(self.rec_traj):
@@ -299,7 +306,7 @@ class RecEnv(gym.Env):
                 time.sleep(4)
                 if not reranked_result.startswith("["):
                     reranked_result = '[' + reranked_result + ']'
-                if extract_and_check_cur_user_reclist(reranked_result, topk=topK):
+                if extract_and_check_cur_user_reclist(reranked_result, topk=topK) == 0:  # 0=valid
                     break
             except Exception as e:
                 print(f"Rerank API 호출 오류 (시도 {attemps}/{max_attempts}): {str(e)}")
