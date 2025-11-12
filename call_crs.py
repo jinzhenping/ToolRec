@@ -46,7 +46,6 @@ def _get_valid_attribute_values(dataset_obj, condition):
                     # Interaction 객체인 경우 처리
                     if hasattr(item_feat_df, 'interaction'):
                         # Interaction 객체를 pandas DataFrame으로 변환
-                        import pandas as pd
                         item_dict = {}
                         for key in item_feat_df.interaction.keys():
                             val = item_feat_df.interaction[key]
@@ -54,6 +53,8 @@ def _get_valid_attribute_values(dataset_obj, condition):
                                 item_dict[key] = val.numpy()
                             elif hasattr(val, 'tolist'):
                                 item_dict[key] = val.tolist()
+                            elif isinstance(val, torch.Tensor):
+                                item_dict[key] = val.cpu().numpy()
                             else:
                                 item_dict[key] = val
                         item_feat_df = pd.DataFrame(item_dict)
@@ -61,6 +62,19 @@ def _get_valid_attribute_values(dataset_obj, condition):
                 if hasattr(item_feat_df, 'columns') and condition in item_feat_df.columns:
                     # 모든 유효한 속성 값 추출
                     series = item_feat_df[condition]
+                    
+                    # series가 Tensor나 numpy array인 경우 pandas Series로 변환
+                    if isinstance(series, torch.Tensor):
+                        series = pd.Series(series.cpu().numpy())
+                    elif isinstance(series, np.ndarray):
+                        series = pd.Series(series)
+                    elif not isinstance(series, pd.Series):
+                        # 다른 타입인 경우 pandas Series로 변환 시도
+                        try:
+                            series = pd.Series(series)
+                        except Exception:
+                            print(f"[경고] series를 pandas Series로 변환할 수 없습니다: {type(series)}")
+                            series = pd.Series([series])
                     
                     # .values 접근 (pandas Series의 속성)
                     # pandas Series의 .values는 속성이므로 직접 접근
@@ -73,21 +87,40 @@ def _get_valid_attribute_values(dataset_obj, condition):
                         
                         # callable인지 확인 (메서드인 경우)
                         if callable(values_attr):
-                            print(f"[경고] series.values가 메서드입니다. to_numpy()를 사용합니다.")
-                            values = series.to_numpy()
+                            print(f"[경고] series.values가 메서드입니다. 대체 방법을 시도합니다.")
+                            # Tensor인 경우
+                            if isinstance(series, torch.Tensor):
+                                values = series.cpu().numpy()
+                            elif hasattr(series, 'to_numpy'):
+                                values = series.to_numpy()
+                            else:
+                                values = list(series)
                         else:
                             # 속성인 경우
                             values = values_attr
                             
                             # values가 여전히 callable인지 확인 (이중 체크)
                             if callable(values):
-                                print(f"[경고] values가 여전히 callable입니다. to_numpy()를 사용합니다.")
-                                values = series.to_numpy()
+                                print(f"[경고] values가 여전히 callable입니다. 대체 방법을 시도합니다.")
+                                # Tensor인 경우
+                                if isinstance(series, torch.Tensor):
+                                    values = series.cpu().numpy()
+                                elif hasattr(series, 'to_numpy'):
+                                    values = series.to_numpy()
+                                else:
+                                    values = list(series)
                     except (AttributeError, TypeError) as e:
                         # .values가 없는 경우 또는 오류 발생 시
-                        print(f"[경고] series.values 접근 실패: {str(e)}. to_numpy()를 시도합니다.")
-                        if hasattr(series, 'to_numpy'):
+                        print(f"[경고] series.values 접근 실패: {str(e)}. 대체 방법을 시도합니다.")
+                        # Tensor 객체인 경우
+                        if isinstance(series, torch.Tensor):
+                            values = series.cpu().numpy()
+                        elif hasattr(series, 'to_numpy'):
                             values = series.to_numpy()
+                        elif hasattr(series, 'numpy'):
+                            values = series.numpy()
+                        elif hasattr(series, 'tolist'):
+                            values = series.tolist()
                         else:
                             values = list(series)
                     
@@ -103,15 +136,27 @@ def _get_valid_attribute_values(dataset_obj, condition):
                         print(f"[오류] values가 여전히 callable입니다. list()로 변환합니다.")
                         values = list(series)
                     
+                    # values가 numpy array나 Tensor인 경우 처리
+                    if isinstance(values, (np.ndarray, torch.Tensor)):
+                        if isinstance(values, torch.Tensor):
+                            values = values.cpu().numpy()
+                        values = values.flatten().tolist()
+                    
                     for value in values:
+                        # Tensor나 numpy array인 경우 처리
+                        if isinstance(value, torch.Tensor):
+                            value = value.item() if value.numel() == 1 else str(value.cpu().numpy())
+                        elif isinstance(value, np.ndarray):
+                            value = value.item() if value.size == 1 else str(value)
+                        
                         if isinstance(value, list):
                             # 리스트인 경우 각 항목 추가
                             for item in value:
-                                if pd.notna(item) and str(item).strip():
+                                if item is not None and str(item).strip():
                                     valid_values.add(str(item).strip().lower())
                         else:
                             # 단일 값인 경우
-                            if pd.notna(value) and str(value).strip():
+                            if value is not None and str(value).strip():
                                 valid_values.add(str(value).strip().lower())
             except Exception as e:
                 print(f"[경고] 속성 값 추출 중 오류 발생: {str(e)}")
@@ -237,7 +282,13 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                 print(f"[오류] '{attribute_value}'는 유효하지 않은 {condition} 값입니다.")
                 print(f"      유효한 값 목록 (일부): {sorted(list(valid_values))[:10]}")
                 # 빈 결과 반환
-                batch_size = uid_series.shape[0]
+                # uid_series가 list나 numpy array일 수 있음
+                if isinstance(uid_series, torch.Tensor):
+                    batch_size = uid_series.shape[0]
+                elif isinstance(uid_series, (list, np.ndarray)):
+                    batch_size = len(uid_series)
+                else:
+                    batch_size = 1
                 return (
                     torch.zeros((batch_size, 0), device=config["device"]),
                     [[] for _ in range(batch_size)],
@@ -248,6 +299,23 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
         all_scores = full_sort_scores(
             uid_series, model, test_data, device=config["device"]
         )  # shape: [batch_size, num_items]
+        
+        # all_scores가 Tensor가 아닌 경우 처리
+        if not isinstance(all_scores, torch.Tensor):
+            if isinstance(all_scores, (list, np.ndarray)):
+                all_scores = torch.tensor(all_scores, device=config["device"])
+            else:
+                print(f"[경고] all_scores 타입이 예상과 다릅니다: {type(all_scores)}")
+                # 일반 검색으로 대체
+                topk_score, topk_iid_list = full_sort_topk(
+                    uid_series, model, test_data, k=topK, device=config["device"]
+                )
+                external_item_list = dataset_obj.id2token(dataset_obj.iid_field, topk_iid_list.cpu())
+                external_item_list_name = []
+                for u_list in external_item_list:
+                    external_item_list_name.append([itemID_name.get(iid, '') for iid in u_list])
+                external_item_list_name = np.array(external_item_list_name)
+                return topk_score, external_item_list, external_item_list_name
         
         # 아이템 속성 정보 가져오기
         item_feat = dataset_obj.item_feat
