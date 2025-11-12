@@ -153,12 +153,43 @@ def _get_valid_attribute_values(dataset_obj, condition):
                             values = values.cpu().numpy()
                         values = values.flatten().tolist()
                     
+                    # field2id_token을 사용하여 내부 ID를 외부 토큰으로 변환
+                    # condition 필드가 field2id_token에 있는 경우 변환
+                    use_token_conversion = False
+                    if hasattr(dataset_obj, 'field2id_token') and condition in dataset_obj.field2id_token:
+                        try:
+                            id_token_map = dataset_obj.field2id_token[condition]
+                            use_token_conversion = True
+                            print(f"[속성 변환] {condition} 필드의 내부 ID를 외부 토큰으로 변환합니다.")
+                        except Exception as e:
+                            print(f"[경고] field2id_token 접근 실패: {str(e)}")
+                    
                     for value in values:
                         # Tensor나 numpy array인 경우 처리
                         if isinstance(value, torch.Tensor):
-                            value = value.item() if value.numel() == 1 else str(value.cpu().numpy())
+                            value = value.item() if value.numel() == 1 else int(value.cpu().numpy())
                         elif isinstance(value, np.ndarray):
-                            value = value.item() if value.size == 1 else str(value)
+                            value = value.item() if value.size == 1 else int(value)
+                        
+                        # 내부 ID를 외부 토큰으로 변환
+                        if use_token_conversion:
+                            try:
+                                # value를 정수로 변환 시도
+                                if isinstance(value, (float, str)):
+                                    # '0.0' -> 0 변환
+                                    int_value = int(float(value))
+                                else:
+                                    int_value = int(value)
+                                
+                                # field2id_token 배열에서 토큰 가져오기
+                                if 0 <= int_value < len(id_token_map):
+                                    value = id_token_map[int_value]
+                                else:
+                                    # 범위를 벗어난 경우 원래 값 사용
+                                    value = str(value)
+                            except (ValueError, TypeError, IndexError) as e:
+                                # 변환 실패 시 원래 값 사용
+                                value = str(value)
                         
                         if isinstance(value, list):
                             # 리스트인 경우 각 항목 추가
@@ -351,18 +382,52 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
         if condition in item_feat.columns:
             # 속성 값으로 필터링할 아이템 인덱스 찾기
             # MIND 데이터셋의 category/subcategory는 리스트나 문자열일 수 있음
-            def matches_attribute(row_value, target_value):
+            
+            # field2token_id를 사용하여 외부 토큰을 내부 ID로 변환
+            # LLM이 입력한 attribute_value(예: 'sports')를 내부 ID로 변환
+            target_internal_id = None
+            if hasattr(dataset_obj, 'field2token_id') and condition in dataset_obj.field2token_id:
+                try:
+                    token_id_map = dataset_obj.field2token_id[condition]
+                    normalized_input = _normalize_attribute_value(attribute_value)
+                    # 정규화된 입력으로 검색
+                    for token, internal_id in token_id_map.items():
+                        if _normalize_attribute_value(token) == normalized_input:
+                            target_internal_id = internal_id
+                            print(f"[속성 변환] '{attribute_value}' -> 내부 ID {target_internal_id}")
+                            break
+                except Exception as e:
+                    print(f"[경고] field2token_id 변환 실패: {str(e)}")
+            
+            def matches_attribute(row_value, target_value, target_id=None):
                 """속성 값 매칭 (리스트, 문자열 모두 지원)"""
                 normalized_target = _normalize_attribute_value(target_value)
+                
+                # row_value가 숫자인 경우 (내부 ID) 처리
+                if target_id is not None:
+                    try:
+                        # row_value를 정수로 변환 시도
+                        if isinstance(row_value, (float, str)):
+                            row_int = int(float(row_value))
+                        else:
+                            row_int = int(row_value)
+                        
+                        # 내부 ID로 직접 비교
+                        if row_int == target_id:
+                            return True
+                    except (ValueError, TypeError):
+                        pass
+                
+                # 외부 토큰으로 비교
                 if isinstance(row_value, list):
                     # 리스트인 경우: 리스트 내에 값이 포함되어 있는지 확인
-                    return any(_normalize_attribute_value(item) == normalized_target for item in row_value)
+                    return any(_normalize_attribute_value(str(item)) == normalized_target for item in row_value)
                 else:
                     # 문자열인 경우: 직접 비교 (대소문자 무시)
-                    return _normalize_attribute_value(row_value) == normalized_target
+                    return _normalize_attribute_value(str(row_value)) == normalized_target
             
             # 필터링 적용
-            mask = item_feat[condition].apply(lambda x: matches_attribute(x, attribute_value))
+            mask = item_feat[condition].apply(lambda x: matches_attribute(x, attribute_value, target_internal_id))
             filtered_items = item_feat[mask]
             
             if len(filtered_items) > 0:
