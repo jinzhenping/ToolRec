@@ -31,6 +31,7 @@ import os
 import pickle
 import argparse
 import gc
+import re
 from utils import *
 parser = argparse.ArgumentParser()
 parser.add_argument("--start", type=int, default=0, help="Cycle start.")
@@ -245,6 +246,18 @@ try:
         if answer:
             # answer는 [item1, item2, ...] 형식일 수 있음
             answer_clean = answer.strip()
+            
+            # 마크다운 코드 블록 제거
+            if answer_clean.startswith('```'):
+                # 첫 번째 ``` 제거
+                lines = answer_clean.split('\n')
+                if lines[0].strip().startswith('```'):
+                    lines = lines[1:]
+                # 마지막 ``` 제거
+                if lines and lines[-1].strip().startswith('```'):
+                    lines = lines[:-1]
+                answer_clean = '\n'.join(lines).strip()
+            
             if answer_clean.startswith('[') and answer_clean.endswith(']'):
                 answer_clean = answer_clean[1:-1].strip()
             
@@ -252,15 +265,33 @@ try:
             items = []
             for line in answer_clean.split('\n'):
                 line = line.strip()
-                if not line:
+                if not line or line.startswith('```'):
                     continue
-                # "item_id, name, score" 형식 또는 "item_id" 형식
-                if ',' in line:
-                    item_id = line.split(',')[0].strip().strip('"').strip("'")
+                
+                # "<item_id>, name, score" 형식 또는 "<item_id>" 형식 파싱
+                # < > 제거
+                if '<' in line and '>' in line:
+                    # <item_id> 형식에서 숫자 추출
+                    import re
+                    match = re.search(r'<(\d+)>', line)
+                    if match:
+                        item_id = match.group(1)
+                    else:
+                        # <item_id>, name 형식
+                        item_id = line.split(',')[0].strip().strip('<').strip('>').strip()
+                elif ',' in line:
+                    item_id = line.split(',')[0].strip().strip('"').strip("'").strip('<').strip('>')
                 else:
-                    item_id = line.strip().strip('"').strip("'")
-                if item_id:
+                    item_id = line.strip().strip('"').strip("'").strip('<').strip('>')
+                
+                # 숫자만 추출 (item_id가 숫자인지 확인)
+                if item_id and item_id.isdigit():
                     items.append(item_id)
+                elif item_id:
+                    # 숫자가 아닌 경우도 시도 (예: "2110" 같은 문자열)
+                    item_id_clean = item_id.strip('<').strip('>').strip()
+                    if item_id_clean.isdigit():
+                        items.append(item_id_clean)
             
             if len(items) >= 10:
                 extracted_items = items[:10]
@@ -280,15 +311,31 @@ try:
                             item_list = []
                             for line in traj_items.split('\n'):
                                 line = line.strip()
-                                if not line:
+                                if not line or line.startswith('```'):
                                     continue
-                                # "item_id, name, score" 형식 또는 "item_id" 형식
-                                if ',' in line:
-                                    item_id = line.split(',')[0].strip().strip('"').strip("'")
+                                
+                                # "<item_id>, name, score" 형식 또는 "<item_id>" 형식 파싱
+                                # < > 제거
+                                if '<' in line and '>' in line:
+                                    # <item_id> 형식에서 숫자 추출
+                                    match = re.search(r'<(\d+)>', line)
+                                    if match:
+                                        item_id = match.group(1)
+                                    else:
+                                        # <item_id>, name 형식
+                                        item_id = line.split(',')[0].strip().strip('<').strip('>').strip()
+                                elif ',' in line:
+                                    item_id = line.split(',')[0].strip().strip('"').strip("'").strip('<').strip('>')
                                 else:
-                                    item_id = line.strip().strip('"').strip("'")
-                                if item_id:
+                                    item_id = line.strip().strip('"').strip("'").strip('<').strip('>')
+                                
+                                # 숫자만 추출
+                                if item_id and item_id.isdigit():
                                     item_list.append(item_id)
+                                elif item_id:
+                                    item_id_clean = item_id.strip('<').strip('>').strip()
+                                    if item_id_clean.isdigit():
+                                        item_list.append(item_id_clean)
                             
                             if len(item_list) >= 10:
                                 extracted_items = item_list[:10]

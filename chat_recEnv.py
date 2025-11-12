@@ -91,23 +91,63 @@ class RecEnv(gym.Env):
         
         question = user_profile[self.user_id] + prompt_cur + prompt_output
         attemps = 0
-        while attemps < 10:
+        max_attempts = 10
+        reranked_result = None
+        
+        while attemps < max_attempts:
             attemps += 1
             try:
                 # reranked_result = llm_chat(role=instruction, User_message=question)
-                reranked_result = llm_chat(User_message=instruction+question)
+                reranked_result = llm_chat(User_message=instruction+question, timeout=60)
                 time.sleep(4)
-                if not reranked_result.startswith("["):
-                    reranked_result = '[' + reranked_result + ']'
+                
+                # LLM 응답에서 실제 리스트 부분만 추출 (마크다운 코드 블록 제거)
+                if reranked_result:
+                    # ``` 로 감싸진 부분 제거
+                    if '```' in reranked_result:
+                        import re
+                        # 코드 블록 내부 추출
+                        match = re.search(r'```.*?\[(.*?)\].*?```', reranked_result, re.DOTALL)
+                        if match:
+                            reranked_result = '[' + match.group(1) + ']'
+                        else:
+                            # ``` 제거 후 [ ] 찾기
+                            cleaned = reranked_result.replace('```', '').strip()
+                            if '[' in cleaned and ']' in cleaned:
+                                start = cleaned.find('[')
+                                end = cleaned.rfind(']') + 1
+                                reranked_result = cleaned[start:end]
+                    
+                    if not reranked_result.startswith("["):
+                        reranked_result = '[' + reranked_result + ']'
 
-                if extract_and_check_cur_user_reclist(reranked_result, topk=topK):
+                if reranked_result and extract_and_check_cur_user_reclist(reranked_result, topk=topK):
                     break
+                else:
+                    if attemps < max_attempts:
+                        print(f"  [경고] Rerank 응답 형식 오류 (시도 {attemps}/{max_attempts}), 재시도 중...")
+                        if reranked_result:
+                            print(f"  응답 샘플: {reranked_result[:200]}...")
             except Exception as e:
-                time.sleep(5)
-                print("An error occurred:", str(e))
+                print(f"Rerank API 호출 오류 (시도 {attemps}/{max_attempts}): {str(e)}")
+                if attemps < max_attempts:
+                    time.sleep(5)
+                else:
+                    print("Rerank 최대 재시도 횟수 초과")
+                    raise
+        
+        # 최종 결과가 없으면 이전 결과 재사용
+        if not reranked_result or not extract_and_check_cur_user_reclist(reranked_result, topk=topK):
+            print(f"  [경고] Rerank 실패: 이전 추천 리스트 재사용")
+            # 이전 rec_traj에서 마지막 유효한 리스트 찾기
+            for line in reversed(self.rec_traj):
+                if line[0] == 'crs' and len(line) >= 4:
+                    reranked_result = line[3]
+                    break
         self.rec_traj.append(['rerank', topK, attribute, reranked_result])
         self.call_llm_cnt += 1
         self.obs = reranked_result
+        return reranked_result
 
     def conclude_step(self, topK):
         instruction = prompt_pattern['knowledge_instruction_2']
