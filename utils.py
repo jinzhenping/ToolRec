@@ -149,7 +149,27 @@ def check_itemList_length(ui_dict, topk=10):
 def extract_and_check_cur_user_reclist(ranked_str, topk=10):
     ranked_str = ranked_str[1:-1]
     res_right = 1
-    cur_user_reclist = [item.split(', ')[0] for item in ranked_str.strip().split('\n')]
+    import re
+    
+    cur_user_reclist = []
+    for item in ranked_str.strip().split('\n'):
+        item = item.strip()
+        if not item:
+            continue
+        
+        # <ID> 형식에서 ID 추출
+        id_match = re.search(r'<(\d+)>', item)
+        if id_match:
+            item_id = id_match.group(1)
+            cur_user_reclist.append(item_id)
+        else:
+            # 기존 방식: 첫 번째 항목 추출
+            first_part = item.split(', ')[0].strip()
+            # < > 제거
+            first_part = first_part.strip('<').strip('>').strip()
+            if first_part:
+                cur_user_reclist.append(first_part)
+    
     if len(cur_user_reclist) == topk:
         # check length fits top K
         res_right = 0

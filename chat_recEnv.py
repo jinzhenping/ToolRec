@@ -103,9 +103,9 @@ class RecEnv(gym.Env):
                 
                 # LLM 응답에서 실제 리스트 부분만 추출 (마크다운 코드 블록 제거)
                 if reranked_result:
+                    import re
                     # ``` 로 감싸진 부분 제거
                     if '```' in reranked_result:
-                        import re
                         # 코드 블록 내부 추출
                         match = re.search(r'```.*?\[(.*?)\].*?```', reranked_result, re.DOTALL)
                         if match:
@@ -117,6 +117,14 @@ class RecEnv(gym.Env):
                                 start = cleaned.find('[')
                                 end = cleaned.rfind(']') + 1
                                 reranked_result = cleaned[start:end]
+                    
+                    # <ID>, title, score 형식인 경우 파싱
+                    if '<' in reranked_result and '>' in reranked_result:
+                        # <42208>, Bold predictions..., 7.5 형식 파싱
+                        id_matches = re.findall(r'<(\d+)>', reranked_result)
+                        if id_matches and len(id_matches) >= topK:
+                            # 아이템 ID 리스트로 재구성
+                            reranked_result = '[' + '\n'.join([f"<{item_id}>" for item_id in id_matches[:topK]]) + ']'
                     
                     if not reranked_result.startswith("["):
                         reranked_result = '[' + reranked_result + ']'
