@@ -147,8 +147,16 @@ def check_itemList_length(ui_dict, topk=10):
 
 
 def extract_and_check_cur_user_reclist(ranked_str, topk=10):
-    ranked_str = ranked_str[1:-1]
-    res_right = 1
+    """
+    추천 리스트 형식 검증 함수
+    Returns: 0 if valid, 1 if invalid
+    """
+    if not ranked_str or len(ranked_str) < 2:
+        return 1  # invalid
+    
+    # 대괄호 제거
+    ranked_str = ranked_str[1:-1] if ranked_str.startswith('[') and ranked_str.endswith(']') else ranked_str
+    res_right = 1  # 1 = invalid, 0 = valid
     import re
     
     cur_user_reclist = []
@@ -173,14 +181,16 @@ def extract_and_check_cur_user_reclist(ranked_str, topk=10):
             if first_part and first_part.isdigit():
                 cur_user_reclist.append(first_part)
     
-    if len(cur_user_reclist) == topk:
-        # check length fits top K
-        res_right = 0
+    # 길이 검증: 정확히 topk개여야 함
+    if len(cur_user_reclist) != topk:
+        return 1  # invalid: 길이가 맞지 않음
+    
+    # 아이템 ID 검증: 모든 ID가 item_token_id에 있어야 함
     for iid in cur_user_reclist:
         if not item_token_id.get(iid, 0):
-        # check item range is suitable.
-            res_right = 0
-    return res_right
+            return 1  # invalid: 아이템 ID가 존재하지 않음
+    
+    return 0  # valid: 모든 검증 통과
 
 def evaluate_user(user_id, pos_item, user_topK, user_num, item_num):
     topk_idx = torch.tensor(user_topK)
