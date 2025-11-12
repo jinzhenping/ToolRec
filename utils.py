@@ -157,17 +157,20 @@ def extract_and_check_cur_user_reclist(ranked_str, topk=10):
         if not item:
             continue
         
-        # <ID> 형식에서 ID 추출
+        # <ID> 형식에서 ID 추출 (여러 형식 지원)
+        # 형식 1: <ID>, title, score
+        # 형식 2: <ID> (줄바꿈으로만 구분)
+        # 형식 3: <ID>
         id_match = re.search(r'<(\d+)>', item)
         if id_match:
             item_id = id_match.group(1)
             cur_user_reclist.append(item_id)
         else:
             # 기존 방식: 첫 번째 항목 추출
-            first_part = item.split(', ')[0].strip()
+            first_part = item.split(',')[0].strip()  # 쉼표 하나로도 분리 시도
             # < > 제거
             first_part = first_part.strip('<').strip('>').strip()
-            if first_part:
+            if first_part and first_part.isdigit():
                 cur_user_reclist.append(first_part)
     
     if len(cur_user_reclist) == topk:
