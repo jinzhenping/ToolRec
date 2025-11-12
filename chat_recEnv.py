@@ -124,19 +124,24 @@ class RecEnv(gym.Env):
 
         question = user_profile[self.user_id] + prompt_cur + prompt_output
         attemps = 0
-        while attemps < 10:
+        max_attempts = 10
+        while attemps < max_attempts:
             attemps += 1
             try:
                 # reranked_result = llm_chat(role=instruction, User_message=question)
-                reranked_result = llm_chat(User_message=instruction+question)
+                reranked_result = llm_chat(User_message=instruction+question, timeout=60)
                 time.sleep(4)
                 if not reranked_result.startswith("["):
                     reranked_result = '[' + reranked_result + ']'
                 if extract_and_check_cur_user_reclist(reranked_result, topk=topK):
                     break
             except Exception as e:
-                time.sleep(5)
-                print("An error occurred:", str(e))
+                print(f"Rerank API 호출 오류 (시도 {attemps}/{max_attempts}): {str(e)}")
+                if attemps < max_attempts:
+                    time.sleep(5)
+                else:
+                    print("Rerank 최대 재시도 횟수 초과")
+                    raise
         
         self.rec_traj.append(['rerank', topK, ' ', reranked_result])
         self.call_llm_cnt += 1

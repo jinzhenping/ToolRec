@@ -10,13 +10,19 @@ env = chat_recWrappers.LoggingWrapper(env)
 
 def step(env, action):
     attemps = 0
-    while attemps < 10:
+    max_attempts = 10
+    while attemps < max_attempts:
         try:
             return env.step(action)
         except Exception as e:
             # Print the details of the exception
-            print("An error occurred:", str(e))
+            print(f"Step 실행 오류 (시도 {attemps + 1}/{max_attempts}): {str(e)}")
             attemps += 1
+            if attemps < max_attempts:
+                time.sleep(2)  # 재시도 전 대기
+            else:
+                print("Step 실행 최대 재시도 횟수 초과")
+                raise
 
 
 import json
@@ -24,6 +30,7 @@ import sys
 import os
 import pickle
 import argparse
+import gc
 from utils import *
 parser = argparse.ArgumentParser()
 parser.add_argument("--start", type=int, default=0, help="Cycle start.")
@@ -46,9 +53,21 @@ def task_customization(userID, sys_role=instruction, prompt=task_prompt, to_prin
 
     for i in range(1, 8):
         n_calls += 1
+        if to_print:
+            print(f"[User {userID}] Step {i}/7 진행 중...")
 
-        thought_action = llm_chat(User_message=sys_role+question+f"Thought {i}:", stop=f"\nObservation {i}:")
-        time.sleep(2)
+        try:
+            # question이 너무 길어지면 메모리 절약을 위해 일부만 유지
+            current_question = sys_role + question + f"Thought {i}:"
+            if len(current_question) > 10000:  # 10KB 이상이면 최근 부분만 유지
+                # 최근 5000자만 유지
+                question = question[-5000:] + question_tail
+            
+            thought_action = llm_chat(User_message=current_question, stop=f"\nObservation {i}:", timeout=60)
+            time.sleep(2)
+        except Exception as e:
+            print(f"[User {userID}] Step {i} API 호출 실패: {str(e)}")
+            raise
 
         try:
             # try again
@@ -125,6 +144,8 @@ u_num = 0
 
 
 infos = []
+save_interval = 10  # 10명마다 중간 저장 및 메모리 정리
+
 for uid in uid_iid.keys():
 
     u_num += 1
@@ -136,17 +157,41 @@ for uid in uid_iid.keys():
 
 
     try: 
+        start_time = time.time()
+        print(f"\n[진행 상황] User {u_num}/{args.start + args.step_num} 처리 중 (User ID: {uid})")
         r, info = task_customization(uid, to_print=True)
+        elapsed_time = time.time() - start_time
         infos.append(info)
         print('steps, \t recsys_steps, \t llm_steps, \t answer')
         logging.info('steps {step}, \t recsys_steps {recsys_steps}, \t llm_steps {llm_steps}, \n answer {answer} \n trajectory {traj}'.format(step=info['steps'], recsys_steps=info['recsys_steps'], llm_steps=info['llm_steps'], answer=info['answer'], traj=info['rec_traj']))
+        print(f'[완료] User {uid} 처리 완료 (소요 시간: {elapsed_time:.2f}초)')
         print('-----------')
+        
+        # 주기적으로 중간 저장 및 메모리 정리
+        if u_num % save_interval == 0:
+            print(f"[메모리 최적화] {u_num}명 처리 완료 - 중간 저장 및 메모리 정리 중...")
+            # 중간 저장
+            output_dir = f"chat_his/{dataset_name}"
+            os.makedirs(output_dir, exist_ok=True)
+            with open(f"chat_his/{dataset_name}/start_{args.start}_intermediate_{u_num}.json", 'w') as f:
+                json.dump(infos, f)
+            # 메모리 정리
+            gc.collect()
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            print(f"[메모리 최적화] 중간 저장 완료 (현재까지 {len(infos)}개 결과 저장)")
+            
     except Exception as e:
         failed_times += 1
+        elapsed_time = time.time() - start_time if 'start_time' in locals() else 0
         # Print the details of the exception
-        time.sleep(20)
+        print(f"[오류] User {uid} 처리 실패 (소요 시간: {elapsed_time:.2f}초)")
         print("An error occurred:", str(e))
         print("OHHHHHHHH... User {user} Failed. Failed_times is {fail}".format(user=uid, fail=failed_times))
+        time.sleep(20)
+        # 오류 발생 시에도 메모리 정리
+        gc.collect()
 
 
 # 결과 저장 디렉토리 생성

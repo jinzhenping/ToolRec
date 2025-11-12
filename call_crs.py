@@ -7,28 +7,58 @@ import numpy as np
 from recbole.utils import get_trainer
 from utils import *
 
+# 모델 캐시: 메모리 누수 방지를 위해 모델을 한 번만 로드하고 재사용
+_model_cache = {}
 
+def _get_cache_key(dataset, condition, mode):
+    """캐시 키 생성"""
+    return f"{dataset}_{condition}_{mode}"
 
 def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freeze'):
-    model_name = model_file_dict[backbone_model][dataset][condition]
-    if mode != 'freeze':
-        model_name = model_BERT[backbone_model][dataset][condition]
-    model_file = checkpoint_path + model_name
+    # 캐시 키 생성
+    cache_key = _get_cache_key(dataset, condition, mode)
     
-    # load trained model
-    config, model, dataset, train_data, valid_data, test_data = load_data_and_model(
-        model_file=model_file,
-    )
+    # 캐시에 모델이 없으면 로드
+    if cache_key not in _model_cache:
+        model_name = model_file_dict[backbone_model][dataset][condition]
+        if mode != 'freeze':
+            model_name = model_BERT[backbone_model][dataset][condition]
+        model_file = checkpoint_path + model_name
+        
+        print(f"[메모리 최적화] 모델 로드 중: {model_name}")
+        # load trained model
+        config, model, dataset_obj, train_data, valid_data, test_data = load_data_and_model(
+            model_file=model_file,
+        )
+        
+        # 모델을 eval 모드로 설정
+        model.eval()
+        
+        # 캐시에 저장
+        _model_cache[cache_key] = {
+            'config': config,
+            'model': model,
+            'dataset': dataset_obj,
+            'test_data': test_data
+        }
+        print(f"[메모리 최적화] 모델 캐시에 저장 완료: {cache_key}")
+    
+    # 캐시에서 모델 가져오기
+    cached = _model_cache[cache_key]
+    config = cached['config']
+    model = cached['model']
+    dataset_obj = cached['dataset']
+    test_data = cached['test_data']
     
     # retrieval top K items, and the corresponding score.
-    uid_series = dataset.token2id(dataset.uid_field, user_id)
+    uid_series = dataset_obj.token2id(dataset_obj.uid_field, user_id)
 
     topk_score, topk_iid_list = full_sort_topk(
         uid_series, model, test_data, k=topK, device=config["device"]
     )
     # print(topk_score)  # scores of top 10 items
     # print(topk_iid_list)  # internal id of top 10 items
-    external_item_list = dataset.id2token(dataset.iid_field, topk_iid_list.cpu())
+    external_item_list = dataset_obj.id2token(dataset_obj.iid_field, topk_iid_list.cpu())
     # print(external_item_list)
     external_item_list_name = []
     for u_list in external_item_list:
@@ -37,6 +67,17 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
 
 
     return topk_score, external_item_list, external_item_list_name
+
+def clear_model_cache():
+    """모델 캐시 정리 (메모리 해제)"""
+    global _model_cache
+    import gc
+    for key in list(_model_cache.keys()):
+        del _model_cache[key]
+    _model_cache = {}
+    gc.collect()
+    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    print("[메모리 최적화] 모델 캐시 정리 완료")
 
 def stdout_retrived_items(score, item_id, item_name):
     retrived_items = []
