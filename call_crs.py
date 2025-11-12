@@ -65,15 +65,26 @@ def _get_valid_attribute_values(dataset_obj, condition):
                     
                     # series가 Tensor나 numpy array인 경우 pandas Series로 변환
                     if isinstance(series, torch.Tensor):
-                        series = pd.Series(series.cpu().numpy())
+                        numpy_data = series.cpu().numpy()
+                        # 1차원으로 변환
+                        if numpy_data.ndim > 1:
+                            numpy_data = numpy_data.flatten()
+                        series = pd.Series(numpy_data)
                     elif isinstance(series, np.ndarray):
+                        # 1차원으로 변환
+                        if series.ndim > 1:
+                            series = series.flatten()
                         series = pd.Series(series)
                     elif not isinstance(series, pd.Series):
                         # 다른 타입인 경우 pandas Series로 변환 시도
                         try:
-                            series = pd.Series(series)
-                        except Exception:
-                            print(f"[경고] series를 pandas Series로 변환할 수 없습니다: {type(series)}")
+                            # list나 iterable인 경우
+                            if hasattr(series, '__iter__') and not isinstance(series, str):
+                                series = pd.Series(list(series))
+                            else:
+                                series = pd.Series([series])
+                        except Exception as e:
+                            print(f"[경고] series를 pandas Series로 변환할 수 없습니다: {type(series)}, 오류: {str(e)}")
                             series = pd.Series([series])
                     
                     # .values 접근 (pandas Series의 속성)
@@ -442,10 +453,73 @@ def clear_model_cache():
 
 def stdout_retrived_items(score, item_id, item_name):
     retrived_items = []
-    for n in range(item_id.shape[0]):
+    
+    # score가 Tensor인 경우 numpy array로 변환
+    if isinstance(score, torch.Tensor):
+        score = score.cpu().numpy()
+    
+    # item_id가 list가 아닌 경우 처리
+    if not isinstance(item_id, list):
+        if isinstance(item_id, np.ndarray):
+            item_id = item_id.tolist()
+        elif isinstance(item_id, torch.Tensor):
+            item_id = item_id.cpu().tolist()
+        else:
+            item_id = [item_id]
+    
+    # item_name이 list가 아닌 경우 처리
+    if not isinstance(item_name, (list, np.ndarray)):
+        if isinstance(item_name, torch.Tensor):
+            item_name = item_name.cpu().tolist()
+        else:
+            item_name = [item_name]
+    elif isinstance(item_name, np.ndarray):
+        item_name = item_name.tolist()
+    
+    # batch_size 확인 (item_id의 길이 사용)
+    batch_size = len(item_id)
+    
+    for n in range(batch_size):
         item_strings = ""
-        for s, iid, ina in zip(score[n], item_id[n], item_name[n]):
-            item_strings = item_strings + str(iid) + ', ' + str(ina) + ", " + str(round(s.item(), 4)) + "\n"
+        # score, item_id, item_name의 n번째 요소 가져오기
+        if isinstance(score, (list, np.ndarray)):
+            score_n = score[n]
+        else:
+            score_n = score[n] if hasattr(score, '__getitem__') else [score]
+        
+        item_id_n = item_id[n] if n < len(item_id) else []
+        item_name_n = item_name[n] if n < len(item_name) else []
+        
+        # score_n이 단일 값인 경우 리스트로 변환
+        if not isinstance(score_n, (list, np.ndarray, torch.Tensor)):
+            score_n = [score_n]
+        elif isinstance(score_n, torch.Tensor):
+            score_n = score_n.cpu().numpy()
+        
+        # item_id_n과 item_name_n도 리스트로 변환
+        if not isinstance(item_id_n, list):
+            item_id_n = [item_id_n]
+        if not isinstance(item_name_n, list):
+            item_name_n = [item_name_n]
+        
+        # 길이 맞추기 (최소 길이 사용)
+        min_len = min(len(score_n), len(item_id_n), len(item_name_n))
+        
+        # zip으로 순회
+        for i in range(min_len):
+            s = score_n[i]
+            iid = item_id_n[i]
+            ina = item_name_n[i]
+            
+            # s가 Tensor나 numpy array인 경우 float로 변환
+            if isinstance(s, torch.Tensor):
+                s_val = s.item() if s.numel() == 1 else float(s.cpu().numpy())
+            elif isinstance(s, np.ndarray):
+                s_val = s.item() if s.size == 1 else float(s)
+            else:
+                s_val = float(s)
+            
+            item_strings = item_strings + str(iid) + ', ' + str(ina) + ", " + str(round(s_val, 4)) + "\n"
         retrived_items.append(item_strings)
     return retrived_items
 
