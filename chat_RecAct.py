@@ -83,7 +83,20 @@ def task_customization(userID, sys_role=instruction, prompt=task_prompt, to_prin
 
         if f"\nObservation {i}: " in action:
             action = action.strip().split(f"\nObservation {i}: ")[0]
-        obs, r, done, info = step(env, action[0].lower() + action[1:])
+        
+        # 액션에서 실제 액션 부분만 추출 (정규식 사용)
+        # "retrieve[...]", "rerank[...]", "finish[...]" 형식 추출
+        action_clean = action.strip()
+        action_match = re.search(r'(retrieve|rerank|finish)\[([^\]]+)\]', action_clean, re.IGNORECASE)
+        if action_match:
+            action_type = action_match.group(1).lower()
+            action_params = action_match.group(2)
+            action_clean = f"{action_type}[{action_params}]"
+        else:
+            # 정규식 매칭 실패 시 첫 글자만 소문자로 변환 (기존 로직)
+            action_clean = action_clean[0].lower() + action_clean[1:] if action_clean else action_clean
+        
+        obs, r, done, info = step(env, action_clean)
         obs = obs.replace('\\n', '')
         step_str = f"Thought {i}: {thought}\nAction {i}: {action}\nObservation {i}: {obs}\n"
         question += step_str

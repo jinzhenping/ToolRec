@@ -198,24 +198,37 @@ class RecEnv(gym.Env):
         if self.answer is not None:  # already finished
             done = True
             return self.obs, reward, done, self._get_info()
-    
-        if action.startswith("retrieve[") and action.endswith("]"):
-            rec_condition, topN = action[len("retrieve["):-1].split(',')[0].strip(), action[len("retrieve["):-1].split(',')[1].strip()
-            topN = int(topN)
-            self.retrieval_step(rec_condition, topN)
-        elif action.startswith("rerank[") and action.endswith("]"):
-            rec_condition, topN = action[len("rerank["):-1].split(',')[0].strip(), action[len("rerank["):-1].split(',')[1].strip()
-            topN = int(topN)
-            self.rerank_step(rec_condition, topN)
-        elif action.startswith("finish"):
+        
+        # 액션에서 실제 액션 부분만 추출 (정규식 사용)
+        import re
+        action_match = re.search(r'(retrieve|rerank|finish)\[([^\]]+)\]', action, re.IGNORECASE)
+        if action_match:
+            action_type = action_match.group(1).lower()
+            action_params = action_match.group(2)
+            
+            if action_type == "retrieve":
+                rec_condition, topN = action_params.split(',')[0].strip(), action_params.split(',')[1].strip()
+                topN = int(topN)
+                self.retrieval_step(rec_condition, topN)
+            elif action_type == "rerank":
+                rec_condition, topN = action_params.split(',')[0].strip(), action_params.split(',')[1].strip()
+                topN = int(topN)
+                self.rerank_step(rec_condition, topN)
+            elif action_type == "finish":
+                answer = self.conclude_step(topK=self.final_length)
+                self.answer = answer[1:-1]
+                done = True
+                self.obs = f"Episode finished, reward = {reward}\n"
+        elif action.lower().startswith("finish"):
+            # finish[] 형식이 아닌 경우도 처리
             answer = self.conclude_step(topK=self.final_length)
             self.answer = answer[1:-1]
             done = True
             self.obs = f"Episode finished, reward = {reward}\n"
-        elif action.startswith("think[") and action.endswith("]"):
+        elif re.search(r'think\[', action, re.IGNORECASE):
             self.obs = "Nice thought.  But an Action cannot be a think."
         else:
-            self.obs = "Invalid action: {}".format(action)
+            self.obs = "Invalid action: {}. Expected format: retrieve[condition, topK], rerank[condition, topK], or finish[]".format(action)
 
         self.steps += 1
 
