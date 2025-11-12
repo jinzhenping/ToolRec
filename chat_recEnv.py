@@ -137,16 +137,22 @@ class RecEnv(gym.Env):
                     import re
                     id_matches = re.findall(r'<(\d+)>', reranked_result)
                     if id_matches and len(id_matches) >= topK:
-                        # item_id_token을 사용하여 외부 ID -> 내부 ID 변환
+                        # item_token_id를 역으로 사용하여 외부 ID -> 내부 ID 변환
+                        # item_token_id는 {내부_ID: 외부_ID} 형식
                         try:
-                            from utils import item_id_token
+                            from utils import item_token_id
                             internal_ids = []
                             for ext_id in id_matches[:topK]:
-                                # item_id_token은 외부 ID -> 내부 ID 매핑
-                                if ext_id in item_id_token:
-                                    internal_ids.append(str(item_id_token[ext_id]))
-                                else:
-                                    # item_id_token에 없으면 외부 ID 그대로 사용
+                                # item_token_id에서 외부 ID를 찾아서 내부 ID 가져오기
+                                found = False
+                                for internal_id, external_id in item_token_id.items():
+                                    if str(external_id) == ext_id:
+                                        internal_ids.append(str(internal_id))
+                                        found = True
+                                        break
+                                
+                                if not found:
+                                    # 외부 ID를 그대로 사용 (이미 내부 ID일 수도 있음)
                                     internal_ids.append(ext_id)
                             
                             if len(internal_ids) >= topK:
@@ -158,6 +164,8 @@ class RecEnv(gym.Env):
                                     break
                         except Exception as e:
                             print(f"  [경고] ID 변환 시도 중 오류: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
                     
                     # 이전 rec_traj에서 아이템 리스트 가져오기
                     previous_items = None
