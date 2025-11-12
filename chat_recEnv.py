@@ -132,48 +132,56 @@ class RecEnv(gym.Env):
                         reranked_result = '[' + reranked_result + ']'
 
                 # LLM 응답 검증 및 외부 ID -> 내부 ID 변환 시도
-                validation_result = extract_and_check_cur_user_reclist(reranked_result, topk=topK) if reranked_result else 1
-                if reranked_result and validation_result != 0:
-                    # 외부 ID를 내부 ID로 변환 시도
-                    import re
-                    id_matches = re.findall(r'<(\d+)>', reranked_result)
-                    if id_matches and len(id_matches) >= topK:
-                        print(f"  [디버깅] 추출된 외부 ID: {id_matches[:5]}... (총 {len(id_matches)}개)")
-                        # item_token_id를 역으로 사용하여 외부 ID -> 내부 ID 변환
-                        # item_token_id는 {내부_ID: 외부_ID} 형식
-                        try:
-                            from utils import item_token_id
-                            internal_ids = []
-                            conversion_count = 0
-                            for ext_id in id_matches[:topK]:
-                                # item_token_id에서 외부 ID를 찾아서 내부 ID 가져오기
-                                found = False
-                                for internal_id, external_id in item_token_id.items():
-                                    if str(external_id) == ext_id:
-                                        internal_ids.append(str(internal_id))
-                                        found = True
-                                        conversion_count += 1
-                                        break
+                if reranked_result:
+                    print(f"  [디버깅] Rerank 응답 검증 시작 (길이: {len(reranked_result)})")
+                    validation_result = extract_and_check_cur_user_reclist(reranked_result, topk=topK)
+                    print(f"  [디버깅] 검증 결과: {validation_result} (0=valid, 1=invalid)")
+                    
+                    if validation_result != 0:
+                        # 외부 ID를 내부 ID로 변환 시도
+                        import re
+                        id_matches = re.findall(r'<(\d+)>', reranked_result)
+                        print(f"  [디버깅] 정규식으로 추출된 ID: {id_matches[:5]}... (총 {len(id_matches)}개, 필요: {topK})")
+                        
+                        if id_matches and len(id_matches) >= topK:
+                            print(f"  [디버깅] 추출된 외부 ID: {id_matches[:5]}... (총 {len(id_matches)}개)")
+                            # item_token_id를 역으로 사용하여 외부 ID -> 내부 ID 변환
+                            # item_token_id는 {내부_ID: 외부_ID} 형식
+                            try:
+                                from utils import item_token_id
+                                internal_ids = []
+                                conversion_count = 0
+                                for ext_id in id_matches[:topK]:
+                                    # item_token_id에서 외부 ID를 찾아서 내부 ID 가져오기
+                                    found = False
+                                    for internal_id, external_id in item_token_id.items():
+                                        if str(external_id) == ext_id:
+                                            internal_ids.append(str(internal_id))
+                                            found = True
+                                            conversion_count += 1
+                                            break
+                                    
+                                    if not found:
+                                        # 외부 ID를 그대로 사용 (이미 내부 ID일 수도 있음)
+                                        internal_ids.append(ext_id)
                                 
-                                if not found:
-                                    # 외부 ID를 그대로 사용 (이미 내부 ID일 수도 있음)
-                                    internal_ids.append(ext_id)
-                            
-                            print(f"  [디버깅] 변환된 내부 ID: {internal_ids[:5]}... (변환: {conversion_count}/{len(id_matches)})")
-                            if len(internal_ids) >= topK:
-                                # 내부 ID로 재구성
-                                reranked_result_internal = '[' + '\n'.join([f"<{item_id}>" for item_id in internal_ids[:topK]]) + ']'
-                                validation_result_internal = extract_and_check_cur_user_reclist(reranked_result_internal, topk=topK)
-                                if validation_result_internal == 0:
-                                    print(f"  [정보] 외부 ID를 내부 ID로 변환 성공")
-                                    reranked_result = reranked_result_internal
-                                    break
-                                else:
-                                    print(f"  [경고] 내부 ID 변환 후에도 검증 실패")
-                        except Exception as e:
-                            print(f"  [경고] ID 변환 시도 중 오류: {str(e)}")
-                            import traceback
-                            traceback.print_exc()
+                                print(f"  [디버깅] 변환된 내부 ID: {internal_ids[:5]}... (변환: {conversion_count}/{len(id_matches)})")
+                                if len(internal_ids) >= topK:
+                                    # 내부 ID로 재구성
+                                    reranked_result_internal = '[' + '\n'.join([f"<{item_id}>" for item_id in internal_ids[:topK]]) + ']'
+                                    validation_result_internal = extract_and_check_cur_user_reclist(reranked_result_internal, topk=topK)
+                                    if validation_result_internal == 0:
+                                        print(f"  [정보] 외부 ID를 내부 ID로 변환 성공")
+                                        reranked_result = reranked_result_internal
+                                        break
+                                    else:
+                                        print(f"  [경고] 내부 ID 변환 후에도 검증 실패")
+                            except Exception as e:
+                                print(f"  [경고] ID 변환 시도 중 오류: {str(e)}")
+                                import traceback
+                                traceback.print_exc()
+                        else:
+                            print(f"  [경고] ID 추출 실패 또는 개수 부족: {len(id_matches) if id_matches else 0}개 (필요: {topK}개)")
                     
                     # 이전 rec_traj에서 아이템 리스트 가져오기
                     previous_items = None

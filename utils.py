@@ -183,23 +183,27 @@ def extract_and_check_cur_user_reclist(ranked_str, topk=10):
     # 길이 검증: 정확히 topk개여야 함
     if len(cur_user_reclist) != topk:
         # 디버깅: 길이가 맞지 않는 경우
-        print(f"  [디버깅] 추출된 아이템 수: {len(cur_user_reclist)}, 필요: {topk}")
+        print(f"  [디버깅 extract_and_check] 추출된 아이템 수: {len(cur_user_reclist)}, 필요: {topk}")
         if cur_user_reclist:
-            print(f"  [디버깅] 추출된 ID 샘플 (처음 5개): {cur_user_reclist[:5]}")
+            print(f"  [디버깅 extract_and_check] 추출된 ID 샘플 (처음 5개): {cur_user_reclist[:5]}")
         return 1  # invalid: 길이가 맞지 않음
     
     # 아이템 ID 검증: 모든 ID가 item_token_id에 있어야 함
     invalid_ids = []
     for iid in cur_user_reclist:
+        # item_token_id는 {내부_ID: 외부_ID} 형식이므로, 내부 ID가 키에 있어야 함
         if not item_token_id.get(iid, 0):
             invalid_ids.append(iid)
     
     if invalid_ids:
         # 디버깅: 유효하지 않은 ID가 있는 경우
-        print(f"  [디버깅] 유효하지 않은 아이템 ID: {invalid_ids[:5]}")
+        print(f"  [디버깅 extract_and_check] 유효하지 않은 아이템 ID: {invalid_ids[:5]}")
         # item_token_id에 있는 샘플 키 확인
         sample_keys = list(item_token_id.keys())[:5]
-        print(f"  [디버깅] item_token_id 샘플 키: {sample_keys}")
+        print(f"  [디버깅 extract_and_check] item_token_id 샘플 키 (내부 ID): {sample_keys}")
+        # item_token_id의 샘플 값 확인 (외부 ID)
+        sample_values = [str(item_token_id.get(k, '')) for k in sample_keys[:3]]
+        print(f"  [디버깅 extract_and_check] item_token_id 샘플 값 (외부 ID): {sample_values}")
         return 1  # invalid: 아이템 ID가 존재하지 않음
     
     return 0  # valid: 모든 검증 통과
