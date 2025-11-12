@@ -237,34 +237,73 @@ try:
             
         # answer에서 추천 리스트 추출
         answer = info.get('answer', '').strip()
+        rec_traj = info.get('rec_traj', [])
+        
+        extracted_items = None
+        
+        # 방법 1: answer에서 추출
         if answer:
-            res_tmp = [item.split(', ')[0] for item in answer.split('\n') if item.strip()]
-            if len(res_tmp) >= 10:
-                uid_topK[user_idx] = res_tmp[:10]
-                valid_count += 1
-            else:
-                # rec_traj에서 추천 리스트 추출 시도
-                rec_traj = info.get('rec_traj', [])
-                found = False
-                for tj in reversed(rec_traj):
-                    if isinstance(tj, list) and len(tj) >= 4:
-                        if tj[0] == 'rerank' and str(tj[1]).isnumeric() and int(tj[1]) >= 10:
-                            try:
-                                traj_items = tj[3].strip()
-                                if traj_items.startswith('[') and traj_items.endswith(']'):
-                                    traj_items = traj_items[1:-1].strip()
-                                item_list = [item.split(",")[0].strip() for item in traj_items.split("\n") if item.strip()]
-                                if len(item_list) >= 10:
-                                    uid_topK[user_idx] = item_list[:10]
-                                    valid_count += 1
-                                    found = True
-                                    break
-                            except:
-                                pass
-                if not found:
-                    invalid_count += 1
+            # answer는 [item1, item2, ...] 형식일 수 있음
+            answer_clean = answer.strip()
+            if answer_clean.startswith('[') and answer_clean.endswith(']'):
+                answer_clean = answer_clean[1:-1].strip()
+            
+            # 줄바꿈 또는 쉼표로 구분된 리스트 파싱
+            items = []
+            for line in answer_clean.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                # "item_id, name, score" 형식 또는 "item_id" 형식
+                if ',' in line:
+                    item_id = line.split(',')[0].strip().strip('"').strip("'")
+                else:
+                    item_id = line.strip().strip('"').strip("'")
+                if item_id:
+                    items.append(item_id)
+            
+            if len(items) >= 10:
+                extracted_items = items[:10]
+        
+        # 방법 2: rec_traj에서 추출 (answer가 없거나 부족한 경우)
+        if not extracted_items or len(extracted_items) < 10:
+            for tj in reversed(rec_traj):
+                if isinstance(tj, list) and len(tj) >= 4:
+                    if tj[0] == 'rerank' and str(tj[1]).isnumeric() and int(tj[1]) >= 10:
+                        try:
+                            traj_items = str(tj[3]).strip()
+                            # [로 시작하고 ]로 끝나는 경우 제거
+                            if traj_items.startswith('[') and traj_items.endswith(']'):
+                                traj_items = traj_items[1:-1].strip()
+                            
+                            # 줄바꿈으로 구분된 리스트 파싱
+                            item_list = []
+                            for line in traj_items.split('\n'):
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                # "item_id, name, score" 형식 또는 "item_id" 형식
+                                if ',' in line:
+                                    item_id = line.split(',')[0].strip().strip('"').strip("'")
+                                else:
+                                    item_id = line.strip().strip('"').strip("'")
+                                if item_id:
+                                    item_list.append(item_id)
+                            
+                            if len(item_list) >= 10:
+                                extracted_items = item_list[:10]
+                                break
+                        except Exception as e:
+                            print(f"  [경고] rec_traj 파싱 오류 (사용자 {user_idx}): {str(e)}")
+                            pass
+        
+        if extracted_items and len(extracted_items) >= 10:
+            uid_topK[user_idx] = extracted_items
+            valid_count += 1
         else:
             invalid_count += 1
+            if extracted_items:
+                print(f"  [경고] 사용자 {user_idx}: 추출된 아이템이 {len(extracted_items)}개뿐 (필요: 10개)")
     
     print(f"전체 사용자: {len(infos)}, 유효한 추천: {valid_count}, 무효한 추천: {invalid_count}")
     
@@ -274,15 +313,40 @@ try:
         # 아이템 ID 검증 및 필터링
         count_out_index = 0
         uid_topK_filtered = {}
+        sample_uid = None
+        sample_items = None
+        
         for uid in list(uid_topK.keys()):
             valid_items = []
+            invalid_items = []
             for iid in uid_topK[uid]:
-                if item_token_id.get(iid, 0):
-                    valid_items.append(iid)
+                # 아이템 ID 정리 (공백, 따옴표 등 제거)
+                iid_clean = str(iid).strip().strip('"').strip("'")
+                if item_token_id.get(iid_clean, 0):
+                    valid_items.append(iid_clean)
+                else:
+                    invalid_items.append(iid_clean)
+            
+            # 디버깅: 첫 번째 사용자의 아이템 ID 확인
+            if sample_uid is None and len(uid_topK[uid]) > 0:
+                sample_uid = uid
+                sample_items = uid_topK[uid]
+                print(f"\n[디버깅] 사용자 {uid}의 추천 리스트 샘플:")
+                print(f"  - 원본 아이템 ID (처음 5개): {sample_items[:5]}")
+                print(f"  - 유효한 아이템: {len(valid_items)}개")
+                print(f"  - 무효한 아이템: {len(invalid_items)}개")
+                if invalid_items:
+                    print(f"  - 무효한 아이템 ID (처음 5개): {invalid_items[:5]}")
+                    # item_token_id에 있는 샘플 아이템 ID 확인
+                    sample_token_ids = list(item_token_id.keys())[:5]
+                    print(f"  - item_token_id 샘플 키 (처음 5개): {sample_token_ids}")
+            
             if len(valid_items) >= 10:
                 uid_topK_filtered[uid] = valid_items[:10]
             else:
                 count_out_index += 1
+                if len(valid_items) > 0:
+                    print(f"  [경고] 사용자 {uid}: 유효한 아이템이 {len(valid_items)}개뿐 (필요: 10개)")
         
         print(f"아이템 ID 검증 후: 유효 {len(uid_topK_filtered)}명, 제외 {count_out_index}명")
         
