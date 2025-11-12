@@ -1,6 +1,7 @@
 
 import torch
 from recbole.utils.case_study import full_sort_topk, full_sort_scores
+import pandas as pd
 from recbole.quick_start import load_data_and_model
 import pickle
 import numpy as np
@@ -10,11 +11,104 @@ from utils import *
 # 모델 캐시: 메모리 누수 방지를 위해 모델을 한 번만 로드하고 재사용
 _model_cache = {}
 
+# 속성 값 캐시: 데이터셋별 유효한 속성 값 저장
+_attribute_values_cache = {}
+
 def _get_cache_key(dataset, condition, mode):
     """캐시 키 생성"""
     return f"{dataset}_{condition}_{mode}"
 
-def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freeze'):
+def _get_valid_attribute_values(dataset_obj, condition):
+    """
+    데이터셋에서 유효한 속성 값 목록을 가져옵니다.
+    
+    Args:
+        dataset_obj: RecBole Dataset 객체
+        condition: 속성 이름 ('category', 'subcategory' 등)
+    
+    Returns:
+        set: 유효한 속성 값들의 집합 (정규화된 형태)
+    """
+    cache_key = f"{dataset_obj.dataset_name}_{condition}"
+    
+    if cache_key not in _attribute_values_cache:
+        valid_values = set()
+        
+        if dataset_obj.item_feat is not None and condition in dataset_obj.item_feat.columns:
+            # 모든 유효한 속성 값 추출
+            for value in dataset_obj.item_feat[condition].values:
+                if isinstance(value, list):
+                    # 리스트인 경우 각 항목 추가
+                    for item in value:
+                        if pd.notna(item) and str(item).strip():
+                            valid_values.add(str(item).strip().lower())
+                else:
+                    # 단일 값인 경우
+                    if pd.notna(value) and str(value).strip():
+                        valid_values.add(str(value).strip().lower())
+        
+        _attribute_values_cache[cache_key] = valid_values
+        print(f"[속성 값 캐시] {condition} 속성의 유효한 값 {len(valid_values)}개 로드됨")
+        if len(valid_values) <= 20:  # 값이 적으면 모두 출력
+            print(f"  - 유효한 값: {sorted(list(valid_values))}")
+    
+    return _attribute_values_cache[cache_key]
+
+def _normalize_attribute_value(value):
+    """
+    속성 값을 정규화합니다 (대소문자, 공백 처리).
+    
+    Args:
+        value: 원본 속성 값
+    
+    Returns:
+        str: 정규화된 속성 값
+    """
+    return str(value).strip().lower()
+
+def _find_best_match(attribute_value, valid_values, threshold=0.8):
+    """
+    유효하지 않은 속성 값에 대해 가장 유사한 유효한 값을 찾습니다.
+    
+    Args:
+        attribute_value: 입력된 속성 값
+        valid_values: 유효한 속성 값들의 집합
+        threshold: 유사도 임계값 (0-1)
+    
+    Returns:
+        str or None: 가장 유사한 유효한 값, 임계값 미만이면 None
+    """
+    from difflib import SequenceMatcher
+    
+    normalized_input = _normalize_attribute_value(attribute_value)
+    
+    best_match = None
+    best_score = 0.0
+    
+    for valid_value in valid_values:
+        # 문자열 유사도 계산
+        similarity = SequenceMatcher(None, normalized_input, valid_value).ratio()
+        if similarity > best_score:
+            best_score = similarity
+            best_match = valid_value
+    
+    if best_score >= threshold:
+        return best_match
+    return None
+
+def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freeze', attribute_value=None):
+    """
+    Retrieval top K items with optional attribute filtering.
+    
+    Args:
+        dataset: Dataset name
+        condition: Attribute type ('None', 'category', 'subcategory')
+        user_id: User ID(s)
+        topK: Number of items to retrieve
+        mode: Model mode ('freeze' or other)
+        attribute_value: Specific attribute value to filter by (e.g., 'sports', 'politics')
+                        If None, no filtering is applied
+    """
     # 캐시 키 생성
     cache_key = _get_cache_key(dataset, condition, mode)
     
@@ -53,16 +147,110 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
     # retrieval top K items, and the corresponding score.
     uid_series = dataset_obj.token2id(dataset_obj.uid_field, user_id)
 
-    topk_score, topk_iid_list = full_sort_topk(
-        uid_series, model, test_data, k=topK, device=config["device"]
-    )
+    # 속성 값 필터링이 필요한 경우, 전체 아이템 점수를 가져온 후 필터링
+    if attribute_value and condition != 'None' and dataset_obj.item_feat is not None:
+        # 유효한 속성 값 목록 가져오기
+        valid_values = _get_valid_attribute_values(dataset_obj, condition)
+        normalized_input = _normalize_attribute_value(attribute_value)
+        
+        # 속성 값 유효성 검증
+        if normalized_input not in valid_values:
+            # 유효하지 않은 값인 경우, 가장 유사한 값 찾기
+            best_match = _find_best_match(attribute_value, valid_values, threshold=0.7)
+            
+            if best_match:
+                print(f"[경고] '{attribute_value}'는 유효하지 않은 {condition} 값입니다.")
+                print(f"      가장 유사한 유효한 값 '{best_match}'를 사용합니다.")
+                attribute_value = best_match  # 유사한 값으로 대체
+            else:
+                print(f"[오류] '{attribute_value}'는 유효하지 않은 {condition} 값입니다.")
+                print(f"      유효한 값 목록 (일부): {sorted(list(valid_values))[:10]}")
+                # 빈 결과 반환
+                batch_size = uid_series.shape[0]
+                return (
+                    torch.zeros((batch_size, 0), device=config["device"]),
+                    [[] for _ in range(batch_size)],
+                    np.array([[] for _ in range(batch_size)])
+                )
+        
+        # 전체 아이템에 대한 점수 계산
+        all_scores = full_sort_scores(
+            uid_series, model, test_data, device=config["device"]
+        )  # shape: [batch_size, num_items]
+        
+        # 아이템 속성 정보 가져오기
+        item_feat = dataset_obj.item_feat
+        if condition in item_feat.columns:
+            # 속성 값으로 필터링할 아이템 인덱스 찾기
+            # MIND 데이터셋의 category/subcategory는 리스트나 문자열일 수 있음
+            def matches_attribute(row_value, target_value):
+                """속성 값 매칭 (리스트, 문자열 모두 지원)"""
+                normalized_target = _normalize_attribute_value(target_value)
+                if isinstance(row_value, list):
+                    # 리스트인 경우: 리스트 내에 값이 포함되어 있는지 확인
+                    return any(_normalize_attribute_value(item) == normalized_target for item in row_value)
+                else:
+                    # 문자열인 경우: 직접 비교 (대소문자 무시)
+                    return _normalize_attribute_value(row_value) == normalized_target
+            
+            # 필터링 적용
+            mask = item_feat[condition].apply(lambda x: matches_attribute(x, attribute_value))
+            filtered_items = item_feat[mask]
+            
+            if len(filtered_items) > 0:
+                # 필터링된 아이템의 외부 ID 가져오기
+                filtered_iids = filtered_items[dataset_obj.iid_field].values.tolist()
+                
+                # 외부 ID를 내부 ID로 변환
+                filtered_iid_internal = dataset_obj.token2id(dataset_obj.iid_field, filtered_iids)
+                
+                if len(filtered_iid_internal) > 0:
+                    # 필터링된 아이템에 대한 점수만 선택
+                    # all_scores의 인덱스는 내부 ID와 일치해야 함
+                    # filtered_iid_internal을 텐서로 변환
+                    filtered_iid_tensor = torch.tensor(filtered_iid_internal, device=config["device"], dtype=torch.long)
+                    filtered_scores = all_scores[:, filtered_iid_tensor]  # shape: [batch_size, num_filtered]
+                    
+                    # TopK 선택
+                    k = min(topK, len(filtered_iid_internal))
+                    topk_scores_filtered, topk_indices_filtered = torch.topk(filtered_scores, k=k, dim=1)
+                    
+                    # 필터링된 인덱스를 원래 아이템 인덱스로 변환
+                    topk_iid_list = filtered_iid_tensor[topk_indices_filtered]
+                    topk_score = topk_scores_filtered
+                    
+                    print(f"[필터링] {condition}='{attribute_value}' 조건으로 {len(filtered_iids)}개 아이템 중 {k}개 선택")
+                else:
+                    # 내부 ID 변환 실패
+                    print(f"[경고] {condition}='{attribute_value}' 조건에 맞는 아이템의 내부 ID 변환 실패")
+                    batch_size = uid_series.shape[0]
+                    topk_score = torch.zeros((batch_size, 0), device=config["device"])
+                    topk_iid_list = torch.zeros((batch_size, 0), dtype=torch.long, device=config["device"])
+            else:
+                # 필터링된 아이템이 없으면 빈 결과 반환
+                print(f"[경고] {condition}='{attribute_value}' 조건에 맞는 아이템이 없습니다.")
+                batch_size = uid_series.shape[0]
+                topk_score = torch.zeros((batch_size, 0), device=config["device"])
+                topk_iid_list = torch.zeros((batch_size, 0), dtype=torch.long, device=config["device"])
+        else:
+            # 속성이 없으면 일반 검색 수행
+            print(f"[경고] {condition} 속성이 item_feat에 없습니다. 일반 검색을 수행합니다.")
+            topk_score, topk_iid_list = full_sort_topk(
+                uid_series, model, test_data, k=topK, device=config["device"]
+            )
+    else:
+        # 필터링이 필요 없으면 일반 검색 수행
+        topk_score, topk_iid_list = full_sort_topk(
+            uid_series, model, test_data, k=topK, device=config["device"]
+        )
+    
     # print(topk_score)  # scores of top 10 items
     # print(topk_iid_list)  # internal id of top 10 items
     external_item_list = dataset_obj.id2token(dataset_obj.iid_field, topk_iid_list.cpu())
     # print(external_item_list)
     external_item_list_name = []
     for u_list in external_item_list:
-        external_item_list_name.append([itemID_name[iid] for iid in u_list])
+        external_item_list_name.append([itemID_name.get(iid, '') for iid in u_list])
     external_item_list_name = np.array(external_item_list_name)
 
 

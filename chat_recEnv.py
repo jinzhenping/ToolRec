@@ -58,13 +58,48 @@ class RecEnv(gym.Env):
         return (observation, info) if return_info else observation
     
     def retrieval_step(self, attribute, topK):
-        if attribute in DATASET_ATT:
+        """
+        Retrieve items with optional attribute value filtering.
+        
+        Args:
+            attribute: Attribute type or "attribute_type=value" or "attribute_type, value"
+                     Examples: "None", "category", "category=sports", "category, sports"
+            topK: Number of items to retrieve
+        """
+        # 속성 파싱: "category=sports" 또는 "category, sports" 형식 지원
+        attribute_type = None
+        attribute_value = None
+        
+        if '=' in attribute:
+            # 형식: "category=sports"
+            parts = attribute.split('=', 1)
+            attribute_type = parts[0].strip()
+            attribute_value = parts[1].strip()
+        elif ',' in attribute and attribute not in DATASET_ATT:
+            # 형식: "category, sports" (쉼표로 구분, attribute가 DATASET_ATT에 없으면 값이 포함된 것으로 간주)
+            parts = attribute.split(',', 1)
+            attribute_type = parts[0].strip()
+            attribute_value = parts[1].strip()
+        else:
+            # 형식: "category" 또는 "None" (속성 타입만)
+            attribute_type = attribute.strip()
+            attribute_value = None
+        
+        if attribute_type in DATASET_ATT:
             uid = [self.user_id]
-            topk_score, external_item_list, external_item_list_name = retrieval_topk(dataset=dataset_name, condition=attribute, user_id=uid, topK=topK)
+            topk_score, external_item_list, external_item_list_name = retrieval_topk(
+                dataset=dataset_name, 
+                condition=attribute_type, 
+                user_id=uid, 
+                topK=topK,
+                attribute_value=attribute_value
+            )
             retrived_items = stdout_retrived_items(topk_score, external_item_list, external_item_list_name)
             item_list = '[' + retrived_items[0] + ']'
             self.call_Recsys_cnt += 1
-            self.rec_traj.append(['crs', topK, attribute, item_list])
+            # rec_traj에 속성 정보 저장 (필터링 정보 포함)
+            attr_display = f"{attribute_type}={attribute_value}" if attribute_value else attribute_type
+            self.rec_traj.append(['crs', topK, attr_display, item_list])
             self.obs = item_list
         else:
             # retrieval from LLM, and or rerank....
