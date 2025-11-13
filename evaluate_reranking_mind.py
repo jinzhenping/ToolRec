@@ -184,10 +184,13 @@ def rerank_with_llm(user_id, candidates, history, topK=5):
         attribute='None', 
         rec_list=candidate_list
     )
+    # rerank prompt에 순서를 바꾸라는 강한 지시 추가
     rerank_prompt = prompt_pattern['rerank_default_2'].format(
         before_topK=5, 
         after_topK=topK
     )
+    # 순서를 반드시 바꾸라는 강한 지시 추가
+    rerank_prompt += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on user preferences.**"
     
     question = user_history + crs_prompt + rerank_prompt
     
@@ -197,6 +200,9 @@ def rerank_with_llm(user_id, candidates, history, topK=5):
         try:
             reranked_result = llm_chat(User_message=instruction + question, timeout=60)
             time.sleep(2)  # API 호출 간격
+            
+            # 디버깅: LLM 원본 응답 출력
+            print(f"  [디버깅] LLM 원본 응답 (처음 500자): {reranked_result[:500] if reranked_result else 'None'}...")
             
             if reranked_result:
                 # 마크다운 코드 블록 제거
@@ -222,6 +228,9 @@ def rerank_with_llm(user_id, candidates, history, topK=5):
                 
                 # <ID>, title, score 형식에서 ID 추출
                 id_matches = re.findall(r'<(\d+)>', reranked_result)
+                print(f"  [디버깅] 추출된 ID 순서: {id_matches[:topK]}")
+                print(f"  [디버깅] 원본 후보 순서: {[c.replace('N', '') if c.startswith('N') else c for c in candidates[:topK]]}")
+                
                 if id_matches and len(id_matches) >= topK:
                     # 외부 ID를 내부 ID로 변환 시도
                     internal_ids = []
@@ -256,8 +265,10 @@ def rerank_with_llm(user_id, candidates, history, topK=5):
                 time.sleep(3)
             else:
                 print(f"  [경고] Reranking 최대 재시도 횟수 초과, 원본 순서 사용")
-                # 실패 시 원본 순서 반환 (첫 번째가 groundtruth)
-                return [c.replace('N', '') if c.startswith('N') else c for c in candidates[:topK]]
+                # 실패 시 원본 순서 반환
+                fallback_result = [c.replace('N', '') if c.startswith('N') else c for c in candidates[:topK]]
+                print(f"  [디버깅] Fallback 결과 (원본 순서): {fallback_result}")
+                return fallback_result
                 
         except Exception as e:
             print(f"  [오류] Reranking 중 오류 발생 (시도 {attempt + 1}/{max_attempts}): {str(e)}")
