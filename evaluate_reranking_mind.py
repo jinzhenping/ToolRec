@@ -13,6 +13,9 @@ import torch
 import numpy as np
 import random
 from chat_api import llm_chat
+
+# 랜덤 시드 설정 (재현성을 위해 주석 처리, 필요시 활성화)
+# random.seed(42)
 from utils import (
     prompt_pattern, user_profile, itemID_name, item_profile,
     item_token_id, item_id_token,
@@ -47,7 +50,11 @@ def parse_tsv_file(tsv_file, shuffle_candidates=True):
                     # 후보 리스트를 랜덤하게 섞기
                     if shuffle_candidates:
                         candidates_list = candidates_list.copy()
+                        # groundtruth 위치 저장 (평가를 위해)
+                        groundtruth_idx = 0
+                        # 랜덤하게 섞기
                         random.shuffle(candidates_list)
+                        print(f"  [디버깅] 후보 리스트 랜덤 섞기 완료: {candidates_list}")
                     
                     data[user_id] = {
                         'history': history,
@@ -201,8 +208,16 @@ def rerank_with_llm(user_id, candidates, history, topK=5):
             reranked_result = llm_chat(User_message=instruction + question, timeout=60)
             time.sleep(2)  # API 호출 간격
             
-            # 디버깅: LLM 원본 응답 출력
-            print(f"  [디버깅] LLM 원본 응답 (처음 500자): {reranked_result[:500] if reranked_result else 'None'}...")
+            # 디버깅: LLM 원본 응답 전체 출력
+            print(f"  [디버깅] LLM 원본 응답 (전체):")
+            print("  " + "=" * 76)
+            if reranked_result:
+                # 여러 줄로 나누어 출력
+                for line in reranked_result.split('\n'):
+                    print(f"  {line}")
+            else:
+                print("  None")
+            print("  " + "=" * 76)
             
             if reranked_result:
                 # 마크다운 코드 블록 제거
@@ -452,15 +467,36 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
                     )
                     time.sleep(2)
                     
+                    # LLM 응답 전체 출력
+                    print(f"  [디버깅] Step {step+1} LLM 응답 (전체):")
+                    print("  " + "=" * 76)
+                    if thought_action:
+                        for line in thought_action.split('\n'):
+                            print(f"  {line}")
+                    else:
+                        print("  None")
+                    print("  " + "=" * 76)
+                    
                     # Thought와 Action 파싱
                     if f"\nAction {step+1}:" in thought_action:
                         thought, action = thought_action.strip().split(f"\nAction {step+1}:")
                     else:
                         thought = thought_action.strip().split('\n')[0]
-                        action = llm_chat(
+                        action_response = llm_chat(
                             User_message=instruction + question + f"Thought {step+1}: {thought}\nAction {step+1}:",
                             timeout=60
-                        ).strip()
+                        )
+                        action = action_response.strip() if action_response else ""
+                        
+                        # Action 응답도 전체 출력
+                        print(f"  [디버깅] Step {step+1} Action LLM 응답 (전체):")
+                        print("  " + "=" * 76)
+                        if action_response:
+                            for line in action_response.split('\n'):
+                                print(f"  {line}")
+                        else:
+                            print("  None")
+                        print("  " + "=" * 76)
                     
                     # Action에서 실제 액션 부분만 추출
                     action_clean = action.strip()

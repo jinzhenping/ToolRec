@@ -159,6 +159,16 @@ class RecEnv(gym.Env):
                 reranked_result = llm_chat(User_message=instruction+question, timeout=60)
                 time.sleep(4)
                 
+                # LLM 응답 전체 출력
+                print(f"  [디버깅] Rerank Step {attemps} LLM 응답 (전체):")
+                print("  " + "=" * 76)
+                if reranked_result:
+                    for line in reranked_result.split('\n'):
+                        print(f"  {line}")
+                else:
+                    print("  None")
+                print("  " + "=" * 76)
+                
                 # LLM 응답에서 실제 리스트 부분만 추출 (마크다운 코드 블록 제거)
                 if reranked_result:
                     import re
