@@ -69,7 +69,20 @@ def format_user_history(user_id, history, itemID_name):
     """
     사용자 히스토리를 포맷팅
     """
-    if user_id not in user_profile:
+    # user_id를 정수와 문자열 모두 시도
+    user_id_int = None
+    user_id_str = str(user_id)
+    try:
+        user_id_int = int(user_id)
+    except (ValueError, TypeError):
+        pass
+    
+    # user_profile에서 찾기 (정수와 문자열 모두 시도)
+    if user_id_int is not None and user_id_int in user_profile:
+        return user_profile[user_id_int]
+    elif user_id_str in user_profile:
+        return user_profile[user_id_str]
+    else:
         # user_profile에 없으면 히스토리에서 직접 생성
         history_str = ""
         for item_id in history[-10:]:  # 최근 10개만 사용
@@ -77,8 +90,6 @@ def format_user_history(user_id, history, itemID_name):
             title = itemID_name.get(clean_id, f'News {clean_id}')
             history_str += f"ID <{clean_id}>, {title}.\n"
         return history_str
-    else:
-        return user_profile[user_id]
 
 
 def rerank_with_model(user_id, candidates, topK=5, condition='None'):
@@ -338,8 +349,12 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             # 5개 후보를 초기 observation으로 설정
             candidate_list = format_candidate_list(candidates, itemID_name)
             
-            # 환경 초기화
-            env.reset(userID=user_id)
+            # 환경 초기화 (user_id를 정수로 변환 시도)
+            try:
+                user_id_for_env = int(user_id)
+            except (ValueError, TypeError):
+                user_id_for_env = user_id
+            env.reset(userID=user_id_for_env)
             
             # 5개 후보를 rec_traj에 추가 (CRS 결과로 가정)
             # rerank_step에서 이전 결과를 참조하므로 rec_traj에 추가
@@ -406,6 +421,8 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
                         
                 except Exception as e:
                     print(f"  [오류] Step {step+1} 실패: {str(e)}")
+                    import traceback
+                    print(f"  [상세 오류] {traceback.format_exc()}")
                     break
             
             # 최종 리스트에서 아이템 ID 추출
@@ -429,7 +446,9 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             all_metrics['ranks'].append(metrics['rank'])
             
         except Exception as e:
+            import traceback
             print(f"  [오류] User {user_id} 처리 실패: {str(e)}")
+            print(f"  [상세 오류] {traceback.format_exc()}")
             failed_users.append(user_id)
             # 실패한 사용자는 0점 처리
             all_metrics['hit@1'].append(0)
