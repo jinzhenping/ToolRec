@@ -597,6 +597,13 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                     print(f"  Step {step+1}: {thought[:100]}...")
                     print(f"  Action: {action_clean}")
                     
+                    # Retrieve 액션 차단: 이미 5개 후보가 있으므로 Retrieve를 사용할 수 없음
+                    if action_type == 'retrieve':
+                        error_msg = f"**ERROR: You cannot use Retrieve action. You already have exactly 5 candidate articles provided above. You must use Rerank action to rerank these 5 articles, or Finish action to complete the task. Please use Rerank[attribute, 5] or Rerank[attribute=value, 5] instead.**"
+                        env.obs = error_msg
+                        print(f"  {error_msg}")
+                        continue  # 다음 step으로 진행
+                    
                     # 학습된 모델을 사용하는 경우, Rerank 액션을 가로채서 모델 사용
                     if use_model and action_type == 'rerank':
                         # Rerank 액션 파라미터 파싱 (원래 프로젝트와 동일한 방식)
@@ -665,7 +672,7 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                         env.rec_traj.append(['rerank', str(rerank_topk), rerank_attribute, obs])
                         env.obs = obs
                         
-                        print(f"  Observation (모델 결과): {obs[:200]}...")
+                        print(f"  Observation (모델 결과): {obs}")
                     else:
                         # LLM 사용 또는 다른 액션인 경우 일반 step 실행
                         obs, reward, done, info = env.step(action_clean)
@@ -673,10 +680,10 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                         if done:
                             # Finish action이 실행됨
                             final_list = info.get('answer', '')
-                            print(f"  Finish! Final list: {final_list[:200]}...")
+                            print(f"  Finish! Final list: {final_list}")
                             break
                         else:
-                            print(f"  Observation: {obs[:200]}...")
+                            print(f"  Observation: {obs}")
                         
                 except Exception as e:
                     print(f"  [오류] Step {step+1} 실패: {str(e)}")
