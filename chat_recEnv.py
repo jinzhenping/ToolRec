@@ -107,7 +107,11 @@ class RecEnv(gym.Env):
 
     
     def rerank_step(self, attribute, topK):
-        instruction = prompt_pattern['knowledge_instruction_2']
+        # 5개 후보만 reranking하는 경우 rerank_only_instruction 사용 (Retrieve 내용 없음)
+        if topK == 5:
+            instruction = prompt_pattern.get('rerank_only_instruction', prompt_pattern['knowledge_instruction_2'])
+        else:
+            instruction = prompt_pattern['knowledge_instruction_2']
         # examples = prompt_dict['ranking_sample']
         self.user_profile = user_profile[self.user_id]
         prompt_cur = ''
@@ -132,25 +136,43 @@ class RecEnv(gym.Env):
             attribute_type = attribute.strip()
             attribute_value = None
         
-        if attribute_type == "None" or attribute == "None":
-            previous_topK = sum([int(i[1]) for i in self.rec_traj])
-            prompt_output = prompt_pattern['rerank_default_2'].format(before_topK=previous_topK, after_topK=topK)
-            # 순서를 반드시 바꾸라는 강한 지시 추가
-            prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on user preferences and relevance scores.**"
-        else:
-            previous_topK = sum([int(i[1]) for i in self.rec_traj])
-            # attribute_value가 있으면 prompt에 명시
-            if attribute_value:
-                # rerank_output_2에 attribute_value 정보 추가
-                rerank_type_display = f"{attribute_type}={attribute_value}"
-                prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=rerank_type_display, after_topK=topK)
-                # 추가로 구체적인 값에 대한 지시 추가
-                prompt_output += f"\n\n**IMPORTANT: You are reranking based on {attribute_type}='{attribute_value}'. Prioritize articles with {attribute_type}='{attribute_value}' in your ranking.**"
-                prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on the specified attribute value and user preferences.**"
+        # 5개 후보만 reranking하는 경우 하드코딩된 prompt 사용
+        previous_topK = sum([int(i[1]) for i in self.rec_traj])
+        if topK == 5 and previous_topK == 5:
+            # 5개 후보를 5개로 reranking하는 경우 하드코딩된 prompt 사용
+            if attribute_type == "None" or attribute == "None":
+                prompt_output = prompt_pattern.get('rerank_default_5', prompt_pattern['rerank_default_2'].format(before_topK=5, after_topK=5))
             else:
-                prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=attribute_type, after_topK=topK)
+                # attribute_value가 있으면 prompt에 명시
+                if attribute_value:
+                    rerank_type_display = f"{attribute_type}={attribute_value}"
+                    prompt_output = prompt_pattern.get('rerank_output_5', prompt_pattern['rerank_output_2'].format(before_topK=5, rerank_type=rerank_type_display, after_topK=5))
+                    # 추가로 구체적인 값에 대한 지시 추가
+                    prompt_output += f"\n\n**IMPORTANT: You are reranking based on {attribute_type}='{attribute_value}'. Prioritize articles with {attribute_type}='{attribute_value}' in your ranking.**"
+                else:
+                    rerank_type_display = attribute_type
+                    prompt_output = prompt_pattern.get('rerank_output_5', prompt_pattern['rerank_output_2'].format(before_topK=5, rerank_type=rerank_type_display, after_topK=5))
+                    # 순서를 반드시 바꾸라는 강한 지시 추가
+                    prompt_output += f"\n\n**IMPORTANT: You are reranking based on {attribute_type} attribute.**"
+        else:
+            # 일반적인 경우 (원래 로직)
+            if attribute_type == "None" or attribute == "None":
+                prompt_output = prompt_pattern['rerank_default_2'].format(before_topK=previous_topK, after_topK=topK)
                 # 순서를 반드시 바꾸라는 강한 지시 추가
-                prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on the {attribute_type} attribute and user preferences.**"
+                prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on user preferences and relevance scores.**"
+            else:
+                # attribute_value가 있으면 prompt에 명시
+                if attribute_value:
+                    # rerank_output_2에 attribute_value 정보 추가
+                    rerank_type_display = f"{attribute_type}={attribute_value}"
+                    prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=rerank_type_display, after_topK=topK)
+                    # 추가로 구체적인 값에 대한 지시 추가
+                    prompt_output += f"\n\n**IMPORTANT: You are reranking based on {attribute_type}='{attribute_value}'. Prioritize articles with {attribute_type}='{attribute_value}' in your ranking.**"
+                    prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on the specified attribute value and user preferences.**"
+                else:
+                    prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=attribute_type, after_topK=topK)
+                    # 순서를 반드시 바꾸라는 강한 지시 추가
+                    prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on the {attribute_type} attribute and user preferences.**"
         
         # 입력 순서를 명시하여 LLM이 순서를 바꿔야 함을 인지하도록 함
         if len(self.rec_traj) > 0:
