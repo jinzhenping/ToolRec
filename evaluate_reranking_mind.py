@@ -366,12 +366,19 @@ def calculate_metrics_single_user(groundtruth_id, reranked_list):
     }
 
 
-def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
+def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model=False, condition='None'):
     """
     TSV 파일의 모든 사용자에 대해 ReAct 패턴으로 reranking 평가 수행
     - LLM이 5개 후보를 보고 만족스러운지 판단
-    - 만족스럽지 않으면 reranking tool 사용
+    - 만족스럽지 않으면 reranking tool 사용 (LLM 또는 학습된 모델)
     - 만족스럽으면 finish
+    
+    Args:
+        tsv_file: TSV 파일 경로
+        start_idx: 시작 인덱스
+        end_idx: 종료 인덱스
+        use_model: True면 학습된 모델 사용, False면 LLM 사용
+        condition: 모델 사용 시 attribute 조건 ('None', 'category', 'subcategory')
     """
     from chat_recEnv import RecEnv
     from chat_recWrappers import reActWrapper, LoggingWrapper
@@ -384,6 +391,10 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
     
     print("=" * 80)
     print("MIND Reranking 평가 시작 (ReAct 패턴)")
+    if use_model:
+        print(f"  [학습된 모델 사용] condition: {condition}")
+    else:
+        print("  [LLM 사용]")
     print("=" * 80)
     
     # TSV 파일 읽기
@@ -578,16 +589,66 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
                     print(f"  Step {step+1}: {thought[:100]}...")
                     print(f"  Action: {action_clean}")
                     
-                    # Environment step 실행
-                    obs, reward, done, info = env.step(action_clean)
-                    
-                    if done:
-                        # Finish action이 실행됨
-                        final_list = info.get('answer', '')
-                        print(f"  Finish! Final list: {final_list[:200]}...")
-                        break
+                    # 학습된 모델을 사용하는 경우, Rerank 액션을 가로채서 모델 사용
+                    if use_model and action_type == 'rerank':
+                        # Rerank 액션 파라미터 파싱
+                        rerank_params = action_params.split(',')
+                        if len(rerank_params) >= 1:
+                            rerank_attribute = rerank_params[0].strip()
+                            rerank_topk = int(rerank_params[1].strip()) if len(rerank_params) >= 2 else 5
+                            
+                            # attribute에서 condition 추출
+                            model_condition = condition
+                            if '=' in rerank_attribute:
+                                # category=sports 형식인 경우
+                                attr_type = rerank_attribute.split('=')[0].strip()
+                                if attr_type in ['category', 'subcategory']:
+                                    model_condition = attr_type
+                            
+                            print(f"  [학습된 모델 사용] Reranking 수행 중... (condition: {model_condition})")
+                            # 학습된 모델로 reranking 수행
+                            reranked_list_model = rerank_with_model(user_id_for_env, candidates, topK=rerank_topk, condition=model_condition)
+                            
+                            # 결과를 observation 형식으로 변환
+                            reranked_items = []
+                            for item_id in reranked_list_model[:rerank_topk]:
+                                clean_id = item_id.replace('N', '') if item_id.startswith('N') else item_id
+                                if item_profile and clean_id in item_profile:
+                                    item_info = item_profile[clean_id].strip()
+                                    score = 9.0 - len(reranked_items) * 0.5
+                                    reranked_items.append(f"{item_info.strip('.')}, {score}")
+                                else:
+                                    title = itemID_name.get(clean_id, f'News {clean_id}')
+                                    score = 9.0 - len(reranked_items) * 0.5
+                                    reranked_items.append(f"<{clean_id}>, {title}, {score}")
+                            
+                            obs = '[' + '\n'.join(reranked_items) + ']'
+                            
+                            # rec_traj에 추가
+                            env.rec_traj.append(['rerank', str(rerank_topk), rerank_attribute, obs])
+                            env.obs = obs
+                            
+                            print(f"  Observation (모델 결과): {obs[:200]}...")
+                        else:
+                            # 파라미터 파싱 실패 시 일반 step 실행
+                            obs, reward, done, info = env.step(action_clean)
+                            if done:
+                                final_list = info.get('answer', '')
+                                print(f"  Finish! Final list: {final_list[:200]}...")
+                                break
+                            else:
+                                print(f"  Observation: {obs[:200]}...")
                     else:
-                        print(f"  Observation: {obs[:200]}...")
+                        # LLM 사용 또는 다른 액션인 경우 일반 step 실행
+                        obs, reward, done, info = env.step(action_clean)
+                        
+                        if done:
+                            # Finish action이 실행됨
+                            final_list = info.get('answer', '')
+                            print(f"  Finish! Final list: {final_list[:200]}...")
+                            break
+                        else:
+                            print(f"  Observation: {obs[:200]}...")
                         
                 except Exception as e:
                     print(f"  [오류] Step {step+1} 실패: {str(e)}")
@@ -799,7 +860,13 @@ if __name__ == "__main__":
     # 평가 수행
     if args.use_react:
         # ReAct 패턴 사용 (원래 프로젝트 방식)
-        metrics = evaluate_reranking_with_react(args.tsv_file, args.start, args.end)
+        metrics = evaluate_reranking_with_react(
+            args.tsv_file, 
+            args.start, 
+            args.end,
+            use_model=args.use_model,
+            condition=args.condition
+        )
     else:
         # 직접 reranking (기존 방식)
         metrics = evaluate_reranking(args.tsv_file, args.start, args.end, 
