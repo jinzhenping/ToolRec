@@ -466,9 +466,51 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             # rerank_step에서 이전 결과를 참조하므로 rec_traj에 추가
             env.rec_traj.append(['crs', '5', 'None', candidate_list])
             
+            # 후보 리스트와 사용자 히스토리에서 카테고리/서브카테고리 추출
+            import re
+            candidate_categories = set()
+            candidate_subcategories = set()
+            history_categories = set()
+            history_subcategories = set()
+            
+            # 후보 리스트에서 카테고리 추출
+            for line in candidate_list.split('\n'):
+                if 'category is' in line:
+                    cat_match = re.search(r'category is ([^,]+)', line)
+                    if cat_match:
+                        candidate_categories.add(cat_match.group(1).strip())
+                if 'subcategory is' in line:
+                    subcat_match = re.search(r'subcategory is ([^,\.]+)', line)
+                    if subcat_match:
+                        candidate_subcategories.add(subcat_match.group(1).strip())
+            
+            # 사용자 히스토리에서 카테고리 추출
+            user_history_str = format_user_history(user_id, history, itemID_name, item_profile)
+            for line in user_history_str.split('\n'):
+                if 'category is' in line:
+                    cat_match = re.search(r'category is ([^,\.]+)', line)
+                    if cat_match:
+                        history_categories.add(cat_match.group(1).strip())
+                if 'subcategory is' in line:
+                    subcat_match = re.search(r'subcategory is ([^,\.]+)', line)
+                    if subcat_match:
+                        history_subcategories.add(subcat_match.group(1).strip())
+            
+            # 공통 카테고리/서브카테고리 찾기
+            common_categories = candidate_categories & history_categories
+            common_subcategories = candidate_subcategories & history_subcategories
+            
             # 초기 observation 설정 (5개만 있다는 것을 명확히 표시)
-            # LLM이 attribute를 자유롭게 선택할 수 있도록 안내
-            initial_obs = f"Here are **exactly 5 candidate news articles** from the recommender system (no more, no less):\n{candidate_list}\n\n**IMPORTANT: You have exactly 5 candidate articles. Please use Rerank[attribute, 5] to rerank these 5 articles, NOT 10.**\n\nYou can use different attributes for reranking:\n- Rerank[None, 5]: Rerank without any attribute condition\n- Rerank[category, 5]: Rerank based on category attribute\n- Rerank[subcategory, 5]: Rerank based on subcategory attribute\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool with an appropriate attribute to improve it. Remember: you can only rerank the 5 articles provided above."
+            # LLM이 구체적인 카테고리 값을 사용하도록 명확하게 안내
+            category_guidance = ""
+            if common_categories:
+                category_guidance += f"\n**RECOMMENDATION: Based on the user's history and candidate articles, the user prefers these categories: {', '.join(sorted(common_categories))}. You can use `Rerank[category={sorted(common_categories)[0]}, 5]` to prioritize articles with this category.**"
+            if common_subcategories:
+                category_guidance += f"\n**RECOMMENDATION: Based on the user's history and candidate articles, the user prefers these subcategories: {', '.join(sorted(common_subcategories))}. You can use `Rerank[subcategory={sorted(common_subcategories)[0]}, 5]` to prioritize articles with this subcategory.**"
+            if not common_categories and not common_subcategories:
+                category_guidance += f"\n**NOTE: Available categories in candidates: {', '.join(sorted(candidate_categories)) if candidate_categories else 'N/A'}. Available subcategories: {', '.join(sorted(candidate_subcategories)) if candidate_subcategories else 'N/A'}.**"
+            
+            initial_obs = f"Here are **exactly 5 candidate news articles** from the recommender system (no more, no less):\n{candidate_list}\n\n**IMPORTANT: You have exactly 5 candidate articles. Please use Rerank[attribute, 5] or Rerank[attribute=value, 5] to rerank these 5 articles, NOT 10.**\n\nYou can use different attributes for reranking:\n- `Rerank[None, 5]`: Rerank without any attribute condition\n- `Rerank[category, 5]`: Rerank based on category attribute (without specific value)\n- `Rerank[category=sports, 5]`: Rerank and prioritize articles with category='sports' (use specific category value from the articles above)\n- `Rerank[subcategory, 5]`: Rerank based on subcategory attribute (without specific value)\n- `Rerank[subcategory=football_nfl, 5]`: Rerank and prioritize articles with subcategory='football_nfl' (use specific subcategory value from the articles above)\n\n**CRITICAL: When you see specific category or subcategory values in the candidate articles or user history, you should use `Rerank[category=value, 5]` or `Rerank[subcategory=value, 5]` with the actual value (e.g., 'sports', 'news', 'football_nfl'), NOT just `Rerank[category, 5]`.**{category_guidance}\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool with an appropriate attribute and specific value to improve it. Remember: you can only rerank the 5 articles provided above."
             env.obs = initial_obs
             
             # ReAct 패턴으로 LLM이 판단하고 reranking tool 사용
