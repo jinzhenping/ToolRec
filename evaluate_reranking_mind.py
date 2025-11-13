@@ -81,9 +81,61 @@ def format_user_history(user_id, history, itemID_name):
         return user_profile[user_id]
 
 
+def rerank_with_model(user_id, candidates, topK=5, condition='None'):
+    """
+    학습된 retrieval 모델의 점수를 사용하여 5개 후보를 reranking
+    """
+    from call_crs import retrieval_topk
+    
+    try:
+        # 5개 후보에 대해 모델 점수 계산
+        # 먼저 모든 아이템에 대한 점수를 가져오기 위해 큰 topK로 retrieval
+        topk_score, external_item_list, external_item_list_name = retrieval_topk(
+            dataset='mind',
+            condition=condition,
+            user_id=[user_id],
+            topK=1000,  # 충분히 큰 값
+            mode='freeze'
+        )
+        
+        # 후보 아이템들의 점수 찾기
+        candidate_scores = {}
+        # external_item_list는 [batch_size, topK] 형태
+        if len(external_item_list) > 0:
+            item_list = external_item_list[0]  # 첫 번째 사용자
+            score_list = topk_score[0].cpu().numpy() if isinstance(topk_score, torch.Tensor) else topk_score[0]
+            
+            # 후보 아이템 ID 정규화 (N 제거)
+            normalized_candidates = [c.replace('N', '') if c.startswith('N') else c for c in candidates]
+            
+            # 각 후보 아이템의 점수 찾기
+            for i, item_id in enumerate(item_list):
+                if item_id in normalized_candidates:
+                    score = float(score_list[i]) if i < len(score_list) else 0.0
+                    candidate_scores[item_id] = score
+            
+            # 점수가 없는 후보는 0점 처리
+            for cand in normalized_candidates:
+                if cand not in candidate_scores:
+                    candidate_scores[cand] = 0.0
+            
+            # 점수로 정렬 (내림차순)
+            sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
+            reranked_list = [item_id for item_id, score in sorted_candidates[:topK]]
+            
+            return reranked_list
+        else:
+            # 점수를 찾을 수 없으면 원본 순서 반환
+            return [c.replace('N', '') if c.startswith('N') else c for c in candidates[:topK]]
+            
+    except Exception as e:
+        print(f"  [경고] 모델 reranking 실패: {str(e)}, 원본 순서 사용")
+        return [c.replace('N', '') if c.startswith('N') else c for c in candidates[:topK]]
+
+
 def rerank_with_llm(user_id, candidates, history, topK=5):
     """
-    LLM을 사용하여 5개 후보를 reranking
+    LLM을 사용하여 5개 후보를 reranking (LLM의 일반 지식 사용)
     """
     # 후보 리스트 포맷팅
     candidate_list = format_candidate_list(candidates, itemID_name)
@@ -228,9 +280,208 @@ def calculate_metrics_single_user(groundtruth_id, reranked_list):
     }
 
 
-def evaluate_reranking(tsv_file, start_idx=0, end_idx=None):
+def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
+    """
+    TSV 파일의 모든 사용자에 대해 ReAct 패턴으로 reranking 평가 수행
+    - LLM이 5개 후보를 보고 만족스러운지 판단
+    - 만족스럽지 않으면 reranking tool 사용
+    - 만족스럽으면 finish
+    """
+    from chat_recEnv import RecEnv
+    from chat_recWrappers import reActWrapper, LoggingWrapper
+    import chat_recEnv, chat_recWrappers
+    
+    # 환경 설정
+    env = chat_recEnv.RecEnv()
+    env = chat_recWrappers.reActWrapper(env)
+    env = chat_recWrappers.LoggingWrapper(env)
+    
+    print("=" * 80)
+    print("MIND Reranking 평가 시작 (ReAct 패턴)")
+    print("=" * 80)
+    
+    # TSV 파일 읽기
+    print(f"\n1. TSV 파일 읽기: {tsv_file}")
+    data = parse_tsv_file(tsv_file)
+    print(f"   - 총 {len(data)}명의 사용자 로드됨")
+    
+    # 평가 범위 설정
+    user_ids = sorted(data.keys())[start_idx:end_idx]
+    total_users = len(user_ids)
+    print(f"\n2. 평가 범위: {start_idx} ~ {end_idx if end_idx else len(data)} ({total_users}명)")
+    
+    # 결과 저장
+    all_metrics = {
+        'hit@1': [],
+        'mrr': [],
+        'ndcg@5': [],
+        'ranks': []
+    }
+    
+    failed_users = []
+    
+    # 각 사용자별로 평가
+    print(f"\n3. ReAct 패턴으로 Reranking 평가 시작...")
+    print("-" * 80)
+    
+    for idx, user_id in enumerate(user_ids, 1):
+        print(f"\n[{idx}/{total_users}] User {user_id} 처리 중...")
+        
+        try:
+            candidates = data[user_id]['candidates']
+            groundtruth = data[user_id]['groundtruth']
+            history = data[user_id]['history']
+            
+            print(f"  Groundtruth: {groundtruth}")
+            print(f"  후보 리스트: {candidates}")
+            
+            # 5개 후보를 초기 observation으로 설정
+            candidate_list = format_candidate_list(candidates, itemID_name)
+            
+            # 환경 초기화
+            env.reset(userID=user_id)
+            
+            # 5개 후보를 rec_traj에 추가 (CRS 결과로 가정)
+            # rerank_step에서 이전 결과를 참조하므로 rec_traj에 추가
+            env.rec_traj.append(['crs', '5', 'None', candidate_list])
+            
+            # 초기 observation 설정
+            initial_obs = f"Here are 5 candidate news articles from the recommender system:\n{candidate_list}\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool to improve it."
+            env.obs = initial_obs
+            
+            # ReAct 패턴으로 LLM이 판단하고 reranking tool 사용
+            # 최대 3번의 action 시도 (retrieve/rerank/finish)
+            max_steps = 3
+            final_list = None
+            
+            for step in range(max_steps):
+                # LLM에게 Thought와 Action 요청
+                user_history = format_user_history(user_id, history, itemID_name)
+                current_obs = env.obs
+                
+                # Prompt 구성
+                instruction = prompt_pattern['instruction']
+                task_prompt = prompt_pattern['task']
+                question = user_history + current_obs + task_prompt
+                
+                # LLM 호출
+                try:
+                    thought_action = llm_chat(
+                        User_message=instruction + question + f"Thought {step+1}:",
+                        timeout=60
+                    )
+                    time.sleep(2)
+                    
+                    # Thought와 Action 파싱
+                    if f"\nAction {step+1}:" in thought_action:
+                        thought, action = thought_action.strip().split(f"\nAction {step+1}:")
+                    else:
+                        thought = thought_action.strip().split('\n')[0]
+                        action = llm_chat(
+                            User_message=instruction + question + f"Thought {step+1}: {thought}\nAction {step+1}:",
+                            timeout=60
+                        ).strip()
+                    
+                    # Action에서 실제 액션 부분만 추출
+                    action_clean = action.strip()
+                    action_match = re.search(r'(retrieve|rerank|finish)\[([^\]]*)\]', action_clean, re.IGNORECASE)
+                    if action_match:
+                        action_type = action_match.group(1).lower()
+                        action_params = action_match.group(2)
+                        action_clean = f"{action_type}[{action_params}]"
+                    
+                    print(f"  Step {step+1}: {thought[:100]}...")
+                    print(f"  Action: {action_clean}")
+                    
+                    # Environment step 실행
+                    obs, reward, done, info = env.step(action_clean)
+                    
+                    if done:
+                        # Finish action이 실행됨
+                        final_list = info.get('answer', '')
+                        print(f"  Finish! Final list: {final_list[:200]}...")
+                        break
+                    else:
+                        print(f"  Observation: {obs[:200]}...")
+                        
+                except Exception as e:
+                    print(f"  [오류] Step {step+1} 실패: {str(e)}")
+                    break
+            
+            # 최종 리스트에서 아이템 ID 추출
+            if final_list:
+                id_matches = re.findall(r'<(\d+)>', final_list)
+                reranked_list = id_matches[:5] if len(id_matches) >= 5 else id_matches
+            else:
+                # 실패 시 원본 순서 사용
+                reranked_list = [c.replace('N', '') if c.startswith('N') else c for c in candidates[:5]]
+            
+            print(f"  Reranked 결과: {reranked_list}")
+            
+            # 메트릭 계산
+            metrics = calculate_metrics_single_user(groundtruth, reranked_list)
+            print(f"  HIT@1: {metrics['hit@1']}, MRR: {metrics['mrr']:.4f}, nDCG@5: {metrics['ndcg@5']:.4f}, Rank: {metrics['rank']}")
+            
+            # 결과 저장
+            all_metrics['hit@1'].append(metrics['hit@1'])
+            all_metrics['mrr'].append(metrics['mrr'])
+            all_metrics['ndcg@5'].append(metrics['ndcg@5'])
+            all_metrics['ranks'].append(metrics['rank'])
+            
+        except Exception as e:
+            print(f"  [오류] User {user_id} 처리 실패: {str(e)}")
+            failed_users.append(user_id)
+            # 실패한 사용자는 0점 처리
+            all_metrics['hit@1'].append(0)
+            all_metrics['mrr'].append(0.0)
+            all_metrics['ndcg@5'].append(0.0)
+            all_metrics['ranks'].append(6)  # rank 6 (리스트 밖)
+        
+        # 진행 상황 출력 (10명마다)
+        if idx % 10 == 0:
+            avg_hit = np.mean(all_metrics['hit@1'])
+            avg_mrr = np.mean(all_metrics['mrr'])
+            avg_ndcg = np.mean(all_metrics['ndcg@5'])
+            print(f"\n  [진행 상황] {idx}/{total_users} 완료")
+            print(f"  현재 평균 - HIT@1: {avg_hit:.4f}, MRR: {avg_mrr:.4f}, nDCG@5: {avg_ndcg:.4f}")
+    
+    # 최종 결과 출력
+    print("\n" + "=" * 80)
+    print("최종 평가 결과")
+    print("=" * 80)
+    
+    if len(all_metrics['hit@1']) > 0:
+        final_hit = np.mean(all_metrics['hit@1'])
+        final_mrr = np.mean(all_metrics['mrr'])
+        final_ndcg = np.mean(all_metrics['ndcg@5'])
+        avg_rank = np.mean(all_metrics['ranks'])
+        
+        print(f"\n총 평가 사용자 수: {len(all_metrics['hit@1'])}")
+        print(f"실패한 사용자 수: {len(failed_users)}")
+        print(f"\n평균 성능:")
+        print(f"  HIT@1:  {final_hit:.4f}")
+        print(f"  MRR:    {final_mrr:.4f}")
+        print(f"  nDCG@5: {final_ndcg:.4f}")
+        print(f"  평균 Rank: {avg_rank:.2f}")
+        
+        if failed_users:
+            print(f"\n실패한 사용자: {failed_users[:10]}..." if len(failed_users) > 10 else f"\n실패한 사용자: {failed_users}")
+    else:
+        print("평가할 사용자가 없습니다.")
+    
+    return all_metrics
+
+
+def evaluate_reranking(tsv_file, start_idx=0, end_idx=None, use_model=False, condition='None'):
     """
     TSV 파일의 모든 사용자에 대해 reranking 평가 수행
+    
+    Args:
+        tsv_file: TSV 파일 경로
+        start_idx: 시작 인덱스
+        end_idx: 종료 인덱스
+        use_model: True면 학습된 모델 사용, False면 LLM 사용
+        condition: 모델 사용 시 attribute 조건 ('None', 'category', 'subcategory')
     """
     print("=" * 80)
     print("MIND Reranking 평가 시작")
@@ -271,9 +522,13 @@ def evaluate_reranking(tsv_file, start_idx=0, end_idx=None):
             print(f"  Groundtruth: {groundtruth}")
             print(f"  후보 리스트: {candidates}")
             
-            # LLM reranking 수행
-            print(f"  LLM reranking 요청 중...")
-            reranked_list = rerank_with_llm(user_id, candidates, history, topK=5)
+            # Reranking 수행
+            if use_model:
+                print(f"  학습된 모델 reranking 수행 중... (condition: {condition})")
+                reranked_list = rerank_with_model(user_id, candidates, topK=5, condition=condition)
+            else:
+                print(f"  LLM reranking 요청 중...")
+                reranked_list = rerank_with_llm(user_id, candidates, history, topK=5)
             print(f"  Reranked 결과: {reranked_list}")
             
             # 메트릭 계산
@@ -340,9 +595,22 @@ if __name__ == "__main__":
                        help='시작 인덱스 (기본값: 0)')
     parser.add_argument('--end', type=int, default=None,
                        help='종료 인덱스 (기본값: None, 전체)')
+    parser.add_argument('--use_model', action='store_true',
+                       help='학습된 모델 사용 (기본값: False, LLM 사용)')
+    parser.add_argument('--condition', type=str, default='None',
+                       choices=['None', 'category', 'subcategory'],
+                       help='모델 사용 시 attribute 조건 (기본값: None)')
+    parser.add_argument('--use_react', action='store_true',
+                       help='ReAct 패턴 사용 (LLM이 자동으로 판단하고 reranking tool 사용)')
     
     args = parser.parse_args()
     
     # 평가 수행
-    metrics = evaluate_reranking(args.tsv_file, args.start, args.end)
+    if args.use_react:
+        # ReAct 패턴 사용 (원래 프로젝트 방식)
+        metrics = evaluate_reranking_with_react(args.tsv_file, args.start, args.end)
+    else:
+        # 직접 reranking (기존 방식)
+        metrics = evaluate_reranking(args.tsv_file, args.start, args.end, 
+                                     use_model=args.use_model, condition=args.condition)
 

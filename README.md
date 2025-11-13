@@ -187,5 +187,6 @@ python evaluate_reranking_mind.py
 # 특정 범위만 평가 (예: 처음 100명)
 python evaluate_reranking_mind.py --start 0 --end 100
 
-# 다른 TSV 파일 사용
-python evaluate_reranking_mind.py --tsv_file your_file.tsv
+# react 적용
+python evaluate_reranking_mind.py --use_react
+python evaluate_reranking_mind.py --use_react --start 0 --end 100
