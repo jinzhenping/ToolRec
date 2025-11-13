@@ -14,7 +14,7 @@ import numpy as np
 import random
 from chat_api import llm_chat
 from utils import (
-    prompt_pattern, user_profile, itemID_name, 
+    prompt_pattern, user_profile, itemID_name, item_profile,
     item_token_id, item_id_token,
     extract_and_check_cur_user_reclist,
     uid_iid
@@ -57,28 +57,33 @@ def parse_tsv_file(tsv_file, shuffle_candidates=True):
     return data
 
 
-def format_candidate_list(candidates, itemID_name):
+def format_candidate_list(candidates, itemID_name, item_profile=None):
     """
     5개 후보를 LLM에게 전달할 형식으로 포맷팅
-    Format: <ID>, Title, score
+    Format: <ID>, Title, category, subcategory, score
     """
     formatted_list = []
     for i, item_id in enumerate(candidates):
         # 외부 ID에서 N 제거 (N104644 -> 104644)
         clean_id = item_id.replace('N', '') if item_id.startswith('N') else item_id
         
-        # 아이템 이름 가져오기
-        title = itemID_name.get(clean_id, f'News {clean_id}')
-        
-        # 초기 점수는 순서대로 (5, 4, 3, 2, 1)
-        score = 5.0 - i * 0.5
-        
-        formatted_list.append(f"<{clean_id}>, {title}, {score}")
+        # item_profile이 있으면 사용 (title, category, subcategory 포함)
+        if item_profile and clean_id in item_profile:
+            # item_profile 형식: "ID <{iid}>, {title}, category is {category}, subcategory is {subcategory}.\n"
+            item_info = item_profile[clean_id].strip()
+            # 점수 추가
+            score = 5.0 - i * 0.5
+            formatted_list.append(f"{item_info.strip('.')}, {score}")
+        else:
+            # item_profile이 없으면 title만 사용
+            title = itemID_name.get(clean_id, f'News {clean_id}')
+            score = 5.0 - i * 0.5
+            formatted_list.append(f"<{clean_id}>, {title}, {score}")
     
     return '\n'.join(formatted_list)
 
 
-def format_user_history(user_id, history, itemID_name):
+def format_user_history(user_id, history, itemID_name, item_profile=None):
     """
     사용자 히스토리를 포맷팅
     """
@@ -100,8 +105,13 @@ def format_user_history(user_id, history, itemID_name):
         history_str = ""
         for item_id in history[-10:]:  # 최근 10개만 사용
             clean_id = item_id.replace('N', '') if item_id.startswith('N') else item_id
-            title = itemID_name.get(clean_id, f'News {clean_id}')
-            history_str += f"ID <{clean_id}>, {title}.\n"
+            # item_profile이 있으면 사용 (title, category, subcategory 포함)
+            if item_profile and clean_id in item_profile:
+                history_str += item_profile[clean_id]
+            else:
+                # item_profile이 없으면 title만 사용
+                title = itemID_name.get(clean_id, f'News {clean_id}')
+                history_str += f"ID <{clean_id}>, {title}.\n"
         return history_str
 
 
@@ -162,10 +172,10 @@ def rerank_with_llm(user_id, candidates, history, topK=5):
     LLM을 사용하여 5개 후보를 reranking (LLM의 일반 지식 사용)
     """
     # 후보 리스트 포맷팅
-    candidate_list = format_candidate_list(candidates, itemID_name)
+    candidate_list = format_candidate_list(candidates, itemID_name, item_profile)
     
     # 사용자 히스토리 포맷팅
-    user_history = format_user_history(user_id, history, itemID_name)
+    user_history = format_user_history(user_id, history, itemID_name, item_profile)
     
     # Prompt 구성
     instruction = prompt_pattern['knowledge_instruction_2']
@@ -361,7 +371,7 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             print(f"  후보 리스트: {candidates}")
             
             # 5개 후보를 초기 observation으로 설정
-            candidate_list = format_candidate_list(candidates, itemID_name)
+            candidate_list = format_candidate_list(candidates, itemID_name, item_profile)
             
             # 환경 초기화 (user_profile에 있는 키 형식으로 변환)
             # user_profile의 키 형식 확인 및 변환
@@ -394,7 +404,7 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             # user_profile에 없으면 임시로 추가 (히스토리에서 생성)
             if user_id_for_env not in user_profile:
                 print(f"  [경고] User {user_id_for_env}가 user_profile에 없습니다. 히스토리에서 생성합니다.")
-                user_history_str = format_user_history(user_id, history, itemID_name)
+                user_history_str = format_user_history(user_id, history, itemID_name, item_profile)
                 user_profile[user_id_for_env] = user_history_str
             
             env.reset(userID=user_id_for_env)
@@ -415,7 +425,7 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             
             for step in range(max_steps):
                 # LLM에게 Thought와 Action 요청
-                user_history = format_user_history(user_id, history, itemID_name)
+                user_history = format_user_history(user_id, history, itemID_name, item_profile)
                 current_obs = env.obs
                 
                 # Prompt 구성
