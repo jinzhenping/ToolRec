@@ -645,26 +645,64 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                         if attribute_value:
                             print(f"    - Attribute Value: {attribute_value}")
                         
-                        reranked_list_model = rerank_with_model(
-                            user_id_for_env, 
-                            candidates, 
-                            topK=rerank_topk, 
+                        # 실제 모델 점수를 가져오기 위해 rerank_with_model을 수정하여 점수도 반환하도록 해야 함
+                        # 일단 rerank_with_model을 호출하고, 실제 점수를 다시 가져와서 observation에 사용
+                        from call_crs import retrieval_topk
+                        
+                        # 모델 점수 가져오기
+                        topk_score, external_item_list, external_item_list_name = retrieval_topk(
+                            dataset='mind',
                             condition=attribute_type if attribute_type != 'None' else 'None',
+                            user_id=[user_id_for_env],
+                            topK=1000,
+                            mode='freeze',
                             attribute_value=attribute_value
                         )
                         
-                        # 결과를 observation 형식으로 변환
+                        # 후보 아이템들의 점수 찾기
+                        candidate_scores = {}
+                        normalized_candidates = [c.replace('N', '') if c.startswith('N') else c for c in candidates]
+                        
+                        if len(external_item_list) > 0:
+                            item_list = external_item_list[0]
+                            score_list = topk_score[0].cpu().numpy() if isinstance(topk_score, torch.Tensor) else topk_score[0]
+                            
+                            for i, item_id in enumerate(item_list):
+                                if item_id in normalized_candidates:
+                                    score = float(score_list[i]) if i < len(score_list) else 0.0
+                                    candidate_scores[item_id] = score
+                            
+                            # 점수가 없는 후보는 0점 처리
+                            for cand in normalized_candidates:
+                                if cand not in candidate_scores:
+                                    candidate_scores[cand] = 0.0
+                            
+                            # 점수로 정렬 (내림차순)
+                            sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
+                            reranked_list_model = [item_id for item_id, score in sorted_candidates[:rerank_topk]]
+                            reranked_scores = {item_id: score for item_id, score in sorted_candidates[:rerank_topk]}
+                        else:
+                            # 점수를 찾을 수 없으면 rerank_with_model 사용
+                            reranked_list_model = rerank_with_model(
+                                user_id_for_env, 
+                                candidates, 
+                                topK=rerank_topk, 
+                                condition=attribute_type if attribute_type != 'None' else 'None',
+                                attribute_value=attribute_value
+                            )
+                            reranked_scores = {item_id: 0.0 for item_id in reranked_list_model}
+                        
+                        # 결과를 observation 형식으로 변환 (실제 모델 점수 사용)
                         reranked_items = []
                         for item_id in reranked_list_model[:rerank_topk]:
                             clean_id = item_id.replace('N', '') if item_id.startswith('N') else item_id
+                            actual_score = reranked_scores.get(item_id, 0.0)
                             if item_profile and clean_id in item_profile:
                                 item_info = item_profile[clean_id].strip()
-                                score = 9.0 - len(reranked_items) * 0.5
-                                reranked_items.append(f"{item_info.strip('.')}, {score}")
+                                reranked_items.append(f"{item_info.strip('.')}, {actual_score:.4f}")
                             else:
                                 title = itemID_name.get(clean_id, f'News {clean_id}')
-                                score = 9.0 - len(reranked_items) * 0.5
-                                reranked_items.append(f"<{clean_id}>, {title}, {score}")
+                                reranked_items.append(f"<{clean_id}>, {title}, {actual_score:.4f}")
                         
                         obs = '[' + '\n'.join(reranked_items) + ']'
                         
@@ -692,12 +730,32 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                     break
             
             # 최종 리스트에서 아이템 ID 추출
-            if final_list:
-                id_matches = re.findall(r'<(\d+)>', final_list)
-                reranked_list = id_matches[:5] if len(id_matches) >= 5 else id_matches
+            # 학습된 모델을 사용한 경우, 마지막 observation에서 직접 추출
+            if use_model and len(env.rec_traj) > 0:
+                # 마지막 rerank 결과에서 추출
+                for line in reversed(env.rec_traj):
+                    if line[0] == 'rerank' and len(line) >= 4:
+                        # observation에서 ID 추출
+                        obs_text = line[3]
+                        id_matches = re.findall(r'<(\d+)>', obs_text)
+                        if id_matches and len(id_matches) >= 5:
+                            reranked_list = id_matches[:5]
+                            break
+                else:
+                    # rerank 결과가 없으면 final_list에서 추출
+                    if final_list:
+                        id_matches = re.findall(r'<(\d+)>', final_list)
+                        reranked_list = id_matches[:5] if len(id_matches) >= 5 else id_matches
+                    else:
+                        reranked_list = [c.replace('N', '') if c.startswith('N') else c for c in candidates[:5]]
             else:
-                # 실패 시 원본 순서 사용
-                reranked_list = [c.replace('N', '') if c.startswith('N') else c for c in candidates[:5]]
+                # LLM 사용 시 final_list에서 추출
+                if final_list:
+                    id_matches = re.findall(r'<(\d+)>', final_list)
+                    reranked_list = id_matches[:5] if len(id_matches) >= 5 else id_matches
+                else:
+                    # 실패 시 원본 순서 사용
+                    reranked_list = [c.replace('N', '') if c.startswith('N') else c for c in candidates[:5]]
             
             print(f"  Reranked 결과: {reranked_list}")
             
