@@ -117,12 +117,35 @@ class RecEnv(gym.Env):
             elif line[0] == 'rerank':
                 prompt_cur = prompt_cur + prompt_pattern['rerank_k'].format(topK=line[1], attribute=line[2], rec_list=line[3])
         last_mode = self.rec_traj[-1][0]
-        if attribute == "None":
+        
+        # attribute 파싱: "category=sports" 또는 "category" 형식 지원
+        attribute_type = None
+        attribute_value = None
+        
+        if '=' in attribute:
+            # 형식: "category=sports"
+            parts = attribute.split('=', 1)
+            attribute_type = parts[0].strip()
+            attribute_value = parts[1].strip()
+        else:
+            # 형식: "category" 또는 "None" (속성 타입만)
+            attribute_type = attribute.strip()
+            attribute_value = None
+        
+        if attribute_type == "None" or attribute == "None":
             previous_topK = sum([int(i[1]) for i in self.rec_traj])
             prompt_output = prompt_pattern['rerank_default_2'].format(before_topK=previous_topK, after_topK=topK)
         else:
             previous_topK = sum([int(i[1]) for i in self.rec_traj])
-            prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=attribute, after_topK=topK)
+            # attribute_value가 있으면 prompt에 명시
+            if attribute_value:
+                # rerank_output_2에 attribute_value 정보 추가
+                rerank_type_display = f"{attribute_type}={attribute_value}"
+                prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=rerank_type_display, after_topK=topK)
+                # 추가로 구체적인 값에 대한 지시 추가
+                prompt_output += f"\n\n**IMPORTANT: You are reranking based on {attribute_type}='{attribute_value}'. Prioritize articles with {attribute_type}='{attribute_value}' in your ranking.**"
+            else:
+                prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=attribute_type, after_topK=topK)
         
         question = user_profile[self.user_id] + prompt_cur + prompt_output
         attemps = 0
@@ -379,8 +402,24 @@ class RecEnv(gym.Env):
                 topN = int(topN)
                 self.retrieval_step(rec_condition, topN)
             elif action_type == "rerank":
-                rec_condition, topN = action_params.split(',')[0].strip(), action_params.split(',')[1].strip()
-                topN = int(topN)
+                # action_params 파싱: "category=sports, 10" 또는 "category, 10" 형식 지원
+                # 마지막 쉼표를 기준으로 split (숫자가 마지막에 오는 경우)
+                parts = [p.strip() for p in action_params.split(',')]
+                
+                # 마지막 부분이 숫자인지 확인
+                try:
+                    topN = int(parts[-1])
+                    # 마지막 부분이 숫자면 attribute는 나머지 부분
+                    if len(parts) > 1:
+                        rec_condition = ','.join(parts[:-1]).strip()
+                    else:
+                        rec_condition = parts[0]
+                except ValueError:
+                    # 마지막 부분이 숫자가 아니면 전체를 attribute로, topN은 기본값 사용
+                    rec_condition = action_params.strip()
+                    topN = 10  # 기본값
+                    print(f"[경고] Rerank action에서 topN을 파싱할 수 없습니다. 기본값 {topN} 사용: {action_params}")
+                
                 self.rerank_step(rec_condition, topN)
             elif action_type == "finish":
                 answer = self.conclude_step(topK=self.final_length)
