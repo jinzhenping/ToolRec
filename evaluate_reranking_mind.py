@@ -11,6 +11,7 @@ import re
 import time
 import torch
 import numpy as np
+import random
 from chat_api import llm_chat
 from utils import (
     prompt_pattern, user_profile, itemID_name, 
@@ -21,9 +22,12 @@ from utils import (
 from recbole.evaluator import Evaluator
 
 
-def parse_tsv_file(tsv_file):
+def parse_tsv_file(tsv_file, shuffle_candidates=True):
     """
     TSV 파일을 읽어서 사용자별로 5개 후보 추출
+    Args:
+        tsv_file: TSV 파일 경로
+        shuffle_candidates: True면 후보 리스트를 랜덤하게 섞음 (기본값: True)
     Returns:
         dict: {user_id: {'history': [...], 'candidates': [...], 'groundtruth': '...'}}
     """
@@ -37,10 +41,18 @@ def parse_tsv_file(tsv_file):
                 candidates = parts[2].split()  # 세 번째 컬럼: 5개 후보
                 
                 if len(candidates) >= 5:
+                    candidates_list = candidates[:5]  # 5개만 사용
+                    groundtruth = candidates_list[0]  # 첫 번째가 groundtruth
+                    
+                    # 후보 리스트를 랜덤하게 섞기
+                    if shuffle_candidates:
+                        candidates_list = candidates_list.copy()
+                        random.shuffle(candidates_list)
+                    
                     data[user_id] = {
                         'history': history,
-                        'candidates': candidates[:5],  # 5개만 사용
-                        'groundtruth': candidates[0]  # 첫 번째가 groundtruth
+                        'candidates': candidates_list,
+                        'groundtruth': groundtruth  # 원본 groundtruth 유지
                     }
     return data
 
@@ -314,8 +326,9 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
     
     # TSV 파일 읽기
     print(f"\n1. TSV 파일 읽기: {tsv_file}")
-    data = parse_tsv_file(tsv_file)
+    data = parse_tsv_file(tsv_file, shuffle_candidates=True)
     print(f"   - 총 {len(data)}명의 사용자 로드됨")
+    print(f"   - 후보 리스트는 랜덤하게 섞어서 제공됩니다")
     
     # 평가 범위 설정
     user_ids = sorted(data.keys())[start_idx:end_idx]
@@ -390,8 +403,8 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             # rerank_step에서 이전 결과를 참조하므로 rec_traj에 추가
             env.rec_traj.append(['crs', '5', 'None', candidate_list])
             
-            # 초기 observation 설정
-            initial_obs = f"Here are 5 candidate news articles from the recommender system:\n{candidate_list}\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool to improve it."
+            # 초기 observation 설정 (5개만 있다는 것을 명확히 표시)
+            initial_obs = f"Here are **exactly 5 candidate news articles** from the recommender system (no more, no less):\n{candidate_list}\n\n**IMPORTANT: You have exactly 5 candidate articles. Please use Rerank[None, 5] to rerank these 5 articles, NOT 10.**\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool to improve it. Remember: you can only rerank the 5 articles provided above."
             env.obs = initial_obs
             
             # ReAct 패턴으로 LLM이 판단하고 reranking tool 사용
@@ -538,8 +551,9 @@ def evaluate_reranking(tsv_file, start_idx=0, end_idx=None, use_model=False, con
     
     # TSV 파일 읽기
     print(f"\n1. TSV 파일 읽기: {tsv_file}")
-    data = parse_tsv_file(tsv_file)
+    data = parse_tsv_file(tsv_file, shuffle_candidates=True)
     print(f"   - 총 {len(data)}명의 사용자 로드됨")
+    print(f"   - 후보 리스트는 랜덤하게 섞어서 제공됩니다")
     
     # 평가 범위 설정
     user_ids = sorted(data.keys())[start_idx:end_idx]

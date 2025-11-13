@@ -1,6 +1,7 @@
 import openai
 import argparse
 import time
+import os
 
 # OpenAI 예외 클래스 import (버전 호환성)
 try:
@@ -46,8 +47,14 @@ def llm_chat(User_message, stop='12', max_retries=3, timeout=60):
         try:
             if _openai_v1:
                 # OpenAI API 1.0.0+ 사용
+                # API 키는 환경 변수 OPENAI_API_KEY에서 읽거나 직접 입력
+                api_key = os.getenv("OPENAI_API_KEY", "")  # 환경 변수에서 읽기, 없으면 빈 문자열
+                if not api_key:
+                    # 환경 변수에 없으면 여기에 직접 입력 (보안상 권장하지 않음)
+                    api_key = ""  # 여기에 API 키를 직접 입력할 수 있지만, 환경 변수 사용을 권장합니다
+                
                 client = OpenAI(
-                    api_key="",  # API 키 설정 필요
+                    api_key=api_key,
                     base_url="https://api.openai.com/v1",
                     timeout=timeout  # 타임아웃 설정
                 )
@@ -67,7 +74,13 @@ def llm_chat(User_message, stop='12', max_retries=3, timeout=60):
                 llm_response = response.choices[0].message.content
             else:
                 # OpenAI API < 1.0.0 사용
-                openai.api_key = ""
+                # API 키는 환경 변수 OPENAI_API_KEY에서 읽거나 직접 입력
+                api_key = os.getenv("OPENAI_API_KEY", "")  # 환경 변수에서 읽기, 없으면 빈 문자열
+                if not api_key:
+                    # 환경 변수에 없으면 여기에 직접 입력 (보안상 권장하지 않음)
+                    api_key = ""  # 여기에 API 키를 직접 입력할 수 있지만, 환경 변수 사용을 권장합니다
+                
+                openai.api_key = api_key
                 openai.api_base = "https://api.openai.com/v1"
                 if stop:
                     response = openai.ChatCompletion.create(
