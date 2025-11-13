@@ -404,7 +404,8 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             env.rec_traj.append(['crs', '5', 'None', candidate_list])
             
             # 초기 observation 설정 (5개만 있다는 것을 명확히 표시)
-            initial_obs = f"Here are **exactly 5 candidate news articles** from the recommender system (no more, no less):\n{candidate_list}\n\n**IMPORTANT: You have exactly 5 candidate articles. Please use Rerank[None, 5] to rerank these 5 articles, NOT 10.**\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool to improve it. Remember: you can only rerank the 5 articles provided above."
+            # LLM이 attribute를 자유롭게 선택할 수 있도록 안내
+            initial_obs = f"Here are **exactly 5 candidate news articles** from the recommender system (no more, no less):\n{candidate_list}\n\n**IMPORTANT: You have exactly 5 candidate articles. Please use Rerank[attribute, 5] to rerank these 5 articles, NOT 10.**\n\nYou can use different attributes for reranking:\n- Rerank[None, 5]: Rerank without any attribute condition\n- Rerank[category, 5]: Rerank based on category attribute\n- Rerank[subcategory, 5]: Rerank based on subcategory attribute\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool with an appropriate attribute to improve it. Remember: you can only rerank the 5 articles provided above."
             env.obs = initial_obs
             
             # ReAct 패턴으로 LLM이 판단하고 reranking tool 사용
