@@ -529,7 +529,12 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
             if not common_categories and not common_subcategories:
                 category_guidance += f"\n**NOTE: Available categories in candidates: {', '.join(sorted(candidate_categories)) if candidate_categories else 'N/A'}. Available subcategories: {', '.join(sorted(candidate_subcategories)) if candidate_subcategories else 'N/A'}.**"
             
-            initial_obs = f"Here are **exactly 5 candidate news articles** from the recommender system (no more, no less):\n{candidate_list}\n\n**CRITICAL: You MUST use Rerank action ONLY. Do NOT use Retrieve action. You already have 5 candidate articles, so you should rerank them, not retrieve new ones.**\n\n**IMPORTANT: You have exactly 5 candidate articles. Please use Rerank[attribute, 5] or Rerank[attribute=value, 5] to rerank these 5 articles, NOT 10.**\n\nYou can use different attributes for reranking:\n- `Rerank[None, 5]`: Rerank without any attribute condition\n- `Rerank[category, 5]`: Rerank based on category attribute (without specific value)\n- `Rerank[category=sports, 5]`: Rerank and prioritize articles with category='sports' (use specific category value from the articles above)\n- `Rerank[subcategory, 5]`: Rerank based on subcategory attribute (without specific value)\n- `Rerank[subcategory=football_nfl, 5]`: Rerank and prioritize articles with subcategory='football_nfl' (use specific subcategory value from the articles above)\n\n**CRITICAL: When you see specific category or subcategory values in the candidate articles or user history, you should use `Rerank[category=value, 5]` or `Rerank[subcategory=value, 5]` with the actual value (e.g., 'sports', 'news', 'football_nfl'), NOT just `Rerank[category, 5]`.**\n\n**DO NOT use Retrieve action. You already have the candidate articles. Just rerank them using Rerank action.**{category_guidance}\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool with an appropriate attribute and specific value to improve it. Remember: you can only rerank the 5 articles provided above."
+            # 후보 리스트 확인 (디버깅)
+            candidate_count = len(candidates)
+            print(f"  [확인] 후보 리스트 길이: {candidate_count}, Groundtruth 포함 여부: {groundtruth in candidates}")
+            print(f"  [확인] 후보 리스트 (평가에 사용): {candidates}")
+            
+            initial_obs = f"**YOU HAVE EXACTLY 5 CANDIDATE ARTICLES PROVIDED BELOW. DO NOT RETRIEVE NEW ARTICLES. YOU MUST ONLY RERANK THESE 5 ARTICLES.**\n\nHere are the **exactly 5 candidate news articles** from the recommender system:\n{candidate_list}\n\n**CRITICAL RULES:**\n1. You have EXACTLY 5 candidate articles above. No more, no less.\n2. You MUST use Rerank action ONLY. DO NOT use Retrieve action.\n3. You can ONLY rerank these 5 articles. You cannot retrieve new articles.\n4. Use Rerank[attribute, 5] or Rerank[attribute=value, 5] to rerank these 5 articles.\n5. DO NOT use 10 in your action. You only have 5 articles.\n\n**Available actions:**\n- `Rerank[None, 5]`: Rerank without any attribute condition\n- `Rerank[category, 5]`: Rerank based on category attribute (without specific value)\n- `Rerank[category=sports, 5]`: Rerank and prioritize articles with category='sports' (use specific category value from the articles above)\n- `Rerank[subcategory, 5]`: Rerank based on subcategory attribute (without specific value)\n- `Rerank[subcategory=football_nfl, 5]`: Rerank and prioritize articles with subcategory='football_nfl' (use specific subcategory value from the articles above)\n- `Finish[list]`: Complete the task with the reranked list\n\n**CRITICAL: When you see specific category or subcategory values in the candidate articles or user history, you should use `Rerank[category=value, 5]` or `Rerank[subcategory=value, 5]` with the actual value (e.g., 'sports', 'news', 'football_nfl'), NOT just `Rerank[category, 5]`.**\n\n**DO NOT use Retrieve action. You already have the candidate articles. Just rerank them using Rerank action.**{category_guidance}\n\nPlease evaluate if this ranking is satisfactory. If not, use Rerank tool with an appropriate attribute and specific value to improve it. Remember: you can only rerank the 5 articles provided above."
             env.obs = initial_obs
             
             # ReAct 패턴으로 LLM이 판단하고 reranking tool 사용
@@ -543,8 +548,9 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                 current_obs = env.obs
                 
                 # Prompt 구성
-                instruction = prompt_pattern['instruction']
-                task_prompt = prompt_pattern['task']
+                # reranking 전용 instruction 사용 (Retrieve 내용 없음)
+                instruction = prompt_pattern.get('rerank_only_instruction_react', prompt_pattern['instruction'])
+                task_prompt = "Task: Rerank the 5 candidate articles provided above.\n"  # task를 reranking 전용으로 변경
                 question = user_history + current_obs + task_prompt
                 
                 # LLM 호출
