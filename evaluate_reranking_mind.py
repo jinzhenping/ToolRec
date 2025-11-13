@@ -15,7 +15,8 @@ from chat_api import llm_chat
 from utils import (
     prompt_pattern, user_profile, itemID_name, 
     item_token_id, item_id_token,
-    extract_and_check_cur_user_reclist
+    extract_and_check_cur_user_reclist,
+    uid_iid
 )
 from recbole.evaluator import Evaluator
 
@@ -349,11 +350,40 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             # 5개 후보를 초기 observation으로 설정
             candidate_list = format_candidate_list(candidates, itemID_name)
             
-            # 환경 초기화 (user_id를 정수로 변환 시도)
+            # 환경 초기화 (user_profile에 있는 키 형식으로 변환)
+            # user_profile의 키 형식 확인 및 변환
+            user_id_for_env = None
+            user_id_str = str(user_id)
             try:
-                user_id_for_env = int(user_id)
+                user_id_int = int(user_id)
             except (ValueError, TypeError):
-                user_id_for_env = user_id
+                user_id_int = None
+            
+            # user_profile에 있는 키 형식 찾기
+            if user_id_int is not None and user_id_int in user_profile:
+                user_id_for_env = user_id_int
+            elif user_id_str in user_profile:
+                user_id_for_env = user_id_str
+            else:
+                # user_profile에 없으면 uid_iid에서 찾기
+                if user_id_int is not None and user_id_int in uid_iid:
+                    user_id_for_env = user_id_int
+                elif user_id_str in uid_iid:
+                    user_id_for_env = user_id_str
+                else:
+                    # 여전히 없으면 첫 번째 사용 가능한 user_id 사용
+                    print(f"  [경고] User {user_id}가 user_profile에 없습니다. 첫 번째 사용자 사용.")
+                    if len(uid_iid) > 0:
+                        user_id_for_env = list(uid_iid.keys())[0]
+                    else:
+                        raise ValueError(f"User {user_id}를 찾을 수 없고, 사용 가능한 사용자도 없습니다.")
+            
+            # user_profile에 없으면 임시로 추가 (히스토리에서 생성)
+            if user_id_for_env not in user_profile:
+                print(f"  [경고] User {user_id_for_env}가 user_profile에 없습니다. 히스토리에서 생성합니다.")
+                user_history_str = format_user_history(user_id, history, itemID_name)
+                user_profile[user_id_for_env] = user_history_str
+            
             env.reset(userID=user_id_for_env)
             
             # 5개 후보를 rec_traj에 추가 (CRS 결과로 가정)
