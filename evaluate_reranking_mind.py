@@ -35,6 +35,8 @@ def parse_tsv_file(tsv_file, shuffle_candidates=True):
         dict: {user_id: {'history': [...], 'candidates': [...], 'groundtruth': '...'}}
     """
     data = {}
+    shuffle_count = 0
+    no_shuffle_count = 0
     with open(tsv_file, 'r', encoding='utf-8') as f:
         for line in f:
             parts = line.strip().split('\t')
@@ -49,18 +51,42 @@ def parse_tsv_file(tsv_file, shuffle_candidates=True):
                     
                     # 후보 리스트를 랜덤하게 섞기
                     if shuffle_candidates:
+                        original_order = candidates_list.copy()
                         candidates_list = candidates_list.copy()
                         # groundtruth 위치 저장 (평가를 위해)
                         groundtruth_idx = 0
                         # 랜덤하게 섞기
                         random.shuffle(candidates_list)
-                        print(f"  [디버깅] 후보 리스트 랜덤 섞기 완료: {candidates_list}")
+                        # 섞기 전후 비교 로그 (처음 5개만 상세 출력)
+                        if original_order == candidates_list:
+                            no_shuffle_count += 1
+                            print(f"  [경고] User {user_id}: 후보 리스트가 섞이지 않았습니다!")
+                            print(f"    원본: {original_order}")
+                            print(f"    결과: {candidates_list}")
+                        else:
+                            shuffle_count += 1
+                            # 처음 5개만 상세 로그 출력
+                            if shuffle_count <= 5:
+                                print(f"  [디버깅] User {user_id}: 후보 리스트 랜덤 섞기 완료")
+                                print(f"    원본: {original_order}")
+                                print(f"    섞은 후: {candidates_list}")
+                    else:
+                        if len(data) < 5:
+                            print(f"  [디버깅] User {user_id}: 후보 리스트 섞기 비활성화")
                     
                     data[user_id] = {
                         'history': history,
                         'candidates': candidates_list,
                         'groundtruth': groundtruth  # 원본 groundtruth 유지
                     }
+    
+    # 요약 정보 출력
+    if shuffle_candidates:
+        print(f"\n  [요약] 총 {len(data)}명의 사용자 중:")
+        print(f"    - 성공적으로 섞인 사용자: {shuffle_count}명")
+        if no_shuffle_count > 0:
+            print(f"    - 섞이지 않은 사용자: {no_shuffle_count}명 (경고 확인 필요)")
+    
     return data
 
 
@@ -394,7 +420,8 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None):
             history = data[user_id]['history']
             
             print(f"  Groundtruth: {groundtruth}")
-            print(f"  후보 리스트: {candidates}")
+            print(f"  후보 리스트 (평가에 사용): {candidates}")
+            print(f"  [확인] 후보 리스트 길이: {len(candidates)}, Groundtruth 포함 여부: {groundtruth in candidates}")
             
             # 5개 후보를 초기 observation으로 설정
             candidate_list = format_candidate_list(candidates, itemID_name, item_profile)
@@ -641,7 +668,8 @@ def evaluate_reranking(tsv_file, start_idx=0, end_idx=None, use_model=False, con
             history = data[user_id]['history']
             
             print(f"  Groundtruth: {groundtruth}")
-            print(f"  후보 리스트: {candidates}")
+            print(f"  후보 리스트 (평가에 사용): {candidates}")
+            print(f"  [확인] 후보 리스트 길이: {len(candidates)}, Groundtruth 포함 여부: {groundtruth in candidates}")
             
             # Reranking 수행
             if use_model:
