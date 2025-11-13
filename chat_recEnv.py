@@ -135,6 +135,8 @@ class RecEnv(gym.Env):
         if attribute_type == "None" or attribute == "None":
             previous_topK = sum([int(i[1]) for i in self.rec_traj])
             prompt_output = prompt_pattern['rerank_default_2'].format(before_topK=previous_topK, after_topK=topK)
+            # 순서를 반드시 바꾸라는 강한 지시 추가
+            prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on user preferences and relevance scores.**"
         else:
             previous_topK = sum([int(i[1]) for i in self.rec_traj])
             # attribute_value가 있으면 prompt에 명시
@@ -144,8 +146,22 @@ class RecEnv(gym.Env):
                 prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=rerank_type_display, after_topK=topK)
                 # 추가로 구체적인 값에 대한 지시 추가
                 prompt_output += f"\n\n**IMPORTANT: You are reranking based on {attribute_type}='{attribute_value}'. Prioritize articles with {attribute_type}='{attribute_value}' in your ranking.**"
+                prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on the specified attribute value and user preferences.**"
             else:
                 prompt_output = prompt_pattern['rerank_output_2'].format(before_topK=previous_topK, rerank_type=attribute_type, after_topK=topK)
+                # 순서를 반드시 바꾸라는 강한 지시 추가
+                prompt_output += "\n\n**CRITICAL: You MUST rerank the articles in a DIFFERENT order from the input list. Do NOT return them in the same order. Reorder them based on the {attribute_type} attribute and user preferences.**"
+        
+        # 입력 순서를 명시하여 LLM이 순서를 바꿔야 함을 인지하도록 함
+        if len(self.rec_traj) > 0:
+            last_traj = self.rec_traj[-1]
+            if last_traj[0] == 'crs' and len(last_traj) >= 4:
+                input_list = last_traj[3]
+                # 입력 리스트에서 ID 추출
+                import re
+                input_ids = re.findall(r'<(\d+)>', input_list)
+                if input_ids and len(input_ids) >= topK:
+                    prompt_output += f"\n\n**REMINDER: The current input order is: {', '.join(input_ids[:topK])}. You MUST output a DIFFERENT order. Do NOT use the same order.**"
         
         question = user_profile[self.user_id] + prompt_cur + prompt_output
         attemps = 0
