@@ -190,3 +190,5 @@ python evaluate_reranking_mind.py --start 0 --end 100
 # react 적용
 python evaluate_reranking_mind.py --use_react
 python evaluate_reranking_mind.py --use_react --start 0 --end 100
+
+python evaluate_reranking_mind.py --use_react --use_model --start 0 --end 10

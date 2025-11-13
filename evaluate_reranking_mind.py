@@ -148,9 +148,16 @@ def format_user_history(user_id, history, itemID_name, item_profile=None):
         return history_str
 
 
-def rerank_with_model(user_id, candidates, topK=5, condition='None'):
+def rerank_with_model(user_id, candidates, topK=5, condition='None', attribute_value=None):
     """
     학습된 retrieval 모델의 점수를 사용하여 5개 후보를 reranking
+    
+    Args:
+        user_id: 사용자 ID
+        candidates: 후보 아이템 리스트
+        topK: 반환할 상위 K개
+        condition: attribute 타입 ('None', 'category', 'subcategory')
+        attribute_value: 구체적인 attribute 값 (예: 'sports', 'football_nfl')
     """
     from call_crs import retrieval_topk
     
@@ -162,7 +169,8 @@ def rerank_with_model(user_id, candidates, topK=5, condition='None'):
             condition=condition,
             user_id=[user_id],
             topK=1000,  # 충분히 큰 값
-            mode='freeze'
+            mode='freeze',
+            attribute_value=attribute_value  # LLM이 선택한 구체적인 카테고리 값 전달
         )
         
         # 후보 아이템들의 점수 찾기
@@ -366,10 +374,11 @@ def calculate_metrics_single_user(groundtruth_id, reranked_list):
     }
 
 
-def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model=False, condition='None'):
+def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model=False):
     """
     TSV 파일의 모든 사용자에 대해 ReAct 패턴으로 reranking 평가 수행
     - LLM이 5개 후보를 보고 만족스러운지 판단
+    - LLM이 자체적으로 어떤 attribute와 구체적인 카테고리 값을 사용할지 결정
     - 만족스럽지 않으면 reranking tool 사용 (LLM 또는 학습된 모델)
     - 만족스럽으면 finish
     
@@ -378,7 +387,6 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
         start_idx: 시작 인덱스
         end_idx: 종료 인덱스
         use_model: True면 학습된 모델 사용, False면 LLM 사용
-        condition: 모델 사용 시 attribute 조건 ('None', 'category', 'subcategory')
     """
     from chat_recEnv import RecEnv
     from chat_recWrappers import reActWrapper, LoggingWrapper
@@ -392,7 +400,7 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
     print("=" * 80)
     print("MIND Reranking 평가 시작 (ReAct 패턴)")
     if use_model:
-        print(f"  [학습된 모델 사용] condition: {condition}")
+        print("  [학습된 모델 사용] LLM이 선택한 attribute와 값을 사용합니다")
     else:
         print("  [LLM 사용]")
     print("=" * 80)
@@ -591,53 +599,73 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                     
                     # 학습된 모델을 사용하는 경우, Rerank 액션을 가로채서 모델 사용
                     if use_model and action_type == 'rerank':
-                        # Rerank 액션 파라미터 파싱
-                        rerank_params = action_params.split(',')
-                        if len(rerank_params) >= 1:
-                            rerank_attribute = rerank_params[0].strip()
-                            rerank_topk = int(rerank_params[1].strip()) if len(rerank_params) >= 2 else 5
-                            
-                            # attribute에서 condition 추출
-                            model_condition = condition
-                            if '=' in rerank_attribute:
-                                # category=sports 형식인 경우
-                                attr_type = rerank_attribute.split('=')[0].strip()
-                                if attr_type in ['category', 'subcategory']:
-                                    model_condition = attr_type
-                            
-                            print(f"  [학습된 모델 사용] Reranking 수행 중... (condition: {model_condition})")
-                            # 학습된 모델로 reranking 수행
-                            reranked_list_model = rerank_with_model(user_id_for_env, candidates, topK=rerank_topk, condition=model_condition)
-                            
-                            # 결과를 observation 형식으로 변환
-                            reranked_items = []
-                            for item_id in reranked_list_model[:rerank_topk]:
-                                clean_id = item_id.replace('N', '') if item_id.startswith('N') else item_id
-                                if item_profile and clean_id in item_profile:
-                                    item_info = item_profile[clean_id].strip()
-                                    score = 9.0 - len(reranked_items) * 0.5
-                                    reranked_items.append(f"{item_info.strip('.')}, {score}")
-                                else:
-                                    title = itemID_name.get(clean_id, f'News {clean_id}')
-                                    score = 9.0 - len(reranked_items) * 0.5
-                                    reranked_items.append(f"<{clean_id}>, {title}, {score}")
-                            
-                            obs = '[' + '\n'.join(reranked_items) + ']'
-                            
-                            # rec_traj에 추가
-                            env.rec_traj.append(['rerank', str(rerank_topk), rerank_attribute, obs])
-                            env.obs = obs
-                            
-                            print(f"  Observation (모델 결과): {obs[:200]}...")
-                        else:
-                            # 파라미터 파싱 실패 시 일반 step 실행
-                            obs, reward, done, info = env.step(action_clean)
-                            if done:
-                                final_list = info.get('answer', '')
-                                print(f"  Finish! Final list: {final_list[:200]}...")
-                                break
+                        # Rerank 액션 파라미터 파싱 (원래 프로젝트와 동일한 방식)
+                        # action_params: "category=sports, 10" 또는 "category, 10" 형식
+                        parts = [p.strip() for p in action_params.split(',')]
+                        
+                        # 마지막 부분이 숫자인지 확인
+                        try:
+                            rerank_topk = int(parts[-1])
+                            # 마지막 부분이 숫자면 attribute는 나머지 부분
+                            if len(parts) > 1:
+                                rerank_attribute = ','.join(parts[:-1]).strip()
                             else:
-                                print(f"  Observation: {obs[:200]}...")
+                                rerank_attribute = parts[0]
+                        except ValueError:
+                            # 마지막 부분이 숫자가 아니면 전체를 attribute로, topK는 기본값 사용
+                            rerank_attribute = action_params.strip()
+                            rerank_topk = 5  # 기본값
+                            print(f"[경고] Rerank action에서 topK를 파싱할 수 없습니다. 기본값 {rerank_topk} 사용: {action_params}")
+                        
+                        # attribute 파싱: "category=sports" 또는 "category" 형식 지원
+                        attribute_type = None
+                        attribute_value = None
+                        
+                        if '=' in rerank_attribute:
+                            # 형식: "category=sports"
+                            attr_parts = rerank_attribute.split('=', 1)
+                            attribute_type = attr_parts[0].strip()
+                            attribute_value = attr_parts[1].strip()
+                        else:
+                            # 형식: "category" 또는 "None" (속성 타입만)
+                            attribute_type = rerank_attribute.strip()
+                            attribute_value = None
+                        
+                        # 학습된 모델로 reranking 수행
+                        # attribute_type을 condition으로, attribute_value를 attribute_value로 전달
+                        print(f"  [학습된 모델 사용] Reranking 수행 중...")
+                        print(f"    - Attribute: {attribute_type}")
+                        if attribute_value:
+                            print(f"    - Attribute Value: {attribute_value}")
+                        
+                        reranked_list_model = rerank_with_model(
+                            user_id_for_env, 
+                            candidates, 
+                            topK=rerank_topk, 
+                            condition=attribute_type if attribute_type != 'None' else 'None',
+                            attribute_value=attribute_value
+                        )
+                        
+                        # 결과를 observation 형식으로 변환
+                        reranked_items = []
+                        for item_id in reranked_list_model[:rerank_topk]:
+                            clean_id = item_id.replace('N', '') if item_id.startswith('N') else item_id
+                            if item_profile and clean_id in item_profile:
+                                item_info = item_profile[clean_id].strip()
+                                score = 9.0 - len(reranked_items) * 0.5
+                                reranked_items.append(f"{item_info.strip('.')}, {score}")
+                            else:
+                                title = itemID_name.get(clean_id, f'News {clean_id}')
+                                score = 9.0 - len(reranked_items) * 0.5
+                                reranked_items.append(f"<{clean_id}>, {title}, {score}")
+                        
+                        obs = '[' + '\n'.join(reranked_items) + ']'
+                        
+                        # rec_traj에 추가
+                        env.rec_traj.append(['rerank', str(rerank_topk), rerank_attribute, obs])
+                        env.obs = obs
+                        
+                        print(f"  Observation (모델 결과): {obs[:200]}...")
                     else:
                         # LLM 사용 또는 다른 액션인 경우 일반 step 실행
                         obs, reward, done, info = env.step(action_clean)
@@ -864,8 +892,7 @@ if __name__ == "__main__":
             args.tsv_file, 
             args.start, 
             args.end,
-            use_model=args.use_model,
-            condition=args.condition
+            use_model=args.use_model
         )
     else:
         # 직접 reranking (기존 방식)
