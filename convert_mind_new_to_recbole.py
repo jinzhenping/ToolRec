@@ -5,6 +5,7 @@ mind_new 디렉토리의 데이터를 RecBole 형식으로 변환하는 스크�
 """
 import pandas as pd
 import os
+import random
 from collections import defaultdict
 
 def convert_mind_new_to_recbole():
@@ -34,15 +35,15 @@ def convert_mind_new_to_recbole():
     news_id_mapping = dict(zip(news_df['news_id'], news_df['news_id_clean']))
     print(f"   - 뉴스 ID 매핑 완료 (예: N88753 -> {news_id_mapping.get('N88753', 'N/A')})")
     
-    print("2. 사용자 행동 데이터 읽기...")
+    print("2. 사용자 행동 데이터 읽기 및 필터링...")
     # behaviors_new.tsv 읽기
     # 형식: user_id \t news_id1 news_id2 news_id3 ...
-    interactions = []
-    user_ids = set()
-    timestamp = 1000000000  # 시작 타임스탬프
-    missing_news = set()
-    total_interactions = 0
     
+    # 1단계: 모든 사용자 데이터를 읽어서 분류
+    all_users_data = {}  # user_id -> news_ids 리스트
+    user_id_list = []
+    
+    print("   2-1. 전체 사용자 데이터 읽기...")
     with open(behaviors_file, 'r', encoding='utf-8') as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
@@ -54,27 +55,84 @@ def convert_mind_new_to_recbole():
                 continue
             
             user_id = parts[0]
+            try:
+                user_id_int = int(user_id)
+            except ValueError:
+                continue
+            
             news_ids = parts[1].split()  # 공백으로 구분된 뉴스 ID 리스트
+            all_users_data[user_id] = news_ids
+            user_id_list.append((user_id, user_id_int))
             
-            user_ids.add(user_id)
-            
-            # 각 사용자의 읽은 뉴스 시퀀스를 시간 순서대로 기록
-            for news_id in news_ids:
-                if news_id in news_id_mapping:
-                    item_id = news_id_mapping[news_id]
-                    interactions.append({
-                        'user_id': user_id,
-                        'item_id': item_id,
-                        'rating': 1.0,  # 읽었다는 의미로 1.0
-                        'timestamp': timestamp
-                    })
-                    timestamp += 1
-                    total_interactions += 1
-                else:
-                    missing_news.add(news_id)
-            
-            if line_num % 10000 == 0:
-                print(f"   - {line_num}줄 처리 중... (현재 {total_interactions}개 상호작용)")
+            if line_num % 100000 == 0:
+                print(f"      - {line_num}줄 처리 중...")
+    
+    print(f"   - 총 {len(all_users_data)}명의 사용자 데이터 읽기 완료")
+    
+    # 2단계: 사용자 필터링
+    # user_id <= 1000: 모두 포함
+    # user_id > 1000: 10만명만 랜덤 샘플링
+    print("   2-2. 사용자 필터링 적용...")
+    selected_users = set()
+    
+    # user_id <= 1000인 사용자 모두 포함
+    for user_id, user_id_int in user_id_list:
+        if user_id_int <= 1000:
+            selected_users.add(user_id)
+    
+    print(f"   - user_id <= 1000: {len(selected_users)}명 포함")
+    
+    # user_id > 1000인 사용자 중에서 10만명 랜덤 샘플링
+    users_over_1000 = [(user_id, user_id_int) for user_id, user_id_int in user_id_list if user_id_int > 1000]
+    print(f"   - user_id > 1000: 총 {len(users_over_1000)}명 중에서 샘플링")
+    
+    if len(users_over_1000) > 100000:
+        # 랜덤 샘플링 (재현 가능성을 위해 시드 설정)
+        random.seed(42)
+        sampled_users = random.sample(users_over_1000, 100000)
+        for user_id, _ in sampled_users:
+            selected_users.add(user_id)
+        print(f"   - 10만명 랜덤 샘플링 완료")
+    else:
+        # 10만명보다 적으면 모두 포함
+        for user_id, _ in users_over_1000:
+            selected_users.add(user_id)
+        print(f"   - 10만명보다 적으므로 모두 포함 ({len(users_over_1000)}명)")
+    
+    print(f"   - 최종 선택된 사용자 수: {len(selected_users)}명")
+    
+    # 3단계: 선택된 사용자의 상호작용 데이터 생성
+    print("   2-3. 선택된 사용자의 상호작용 데이터 생성...")
+    interactions = []
+    user_ids = set()
+    timestamp = 1000000000  # 시작 타임스탬프
+    missing_news = set()
+    total_interactions = 0
+    
+    for user_id in selected_users:
+        if user_id not in all_users_data:
+            continue
+        
+        user_ids.add(user_id)
+        news_ids = all_users_data[user_id]
+        
+        # 각 사용자의 읽은 뉴스 시퀀스를 시간 순서대로 기록
+        for news_id in news_ids:
+            if news_id in news_id_mapping:
+                item_id = news_id_mapping[news_id]
+                interactions.append({
+                    'user_id': user_id,
+                    'item_id': item_id,
+                    'rating': 1.0,  # 읽었다는 의미로 1.0
+                    'timestamp': timestamp
+                })
+                timestamp += 1
+                total_interactions += 1
+            else:
+                missing_news.add(news_id)
+        
+        if len(user_ids) % 10000 == 0:
+            print(f"      - {len(user_ids)}명 처리 중... (현재 {total_interactions}개 상호작용)")
     
     if missing_news:
         print(f"   - 경고: {len(missing_news)}개의 뉴스 ID가 뉴스 파일에 없습니다 (상호작용에서 제외됨)")
