@@ -6,6 +6,7 @@ mind_new 디렉토리의 데이터를 RecBole 형식으로 변환하는 스크�
 import pandas as pd
 import os
 import random
+import pickle
 from collections import defaultdict
 
 def convert_mind_new_to_recbole():
@@ -164,18 +165,109 @@ def convert_mind_new_to_recbole():
     
     print(f"   - {train_inter_output} 저장 완료 (benchmark_filename용)")
     
-    # mind.test.inter도 생성 (빈 파일 또는 기존 파일 유지)
-    # 학습만 하고 싶다면 빈 파일을 생성하거나, 기존 파일을 유지
-    test_inter_output = os.path.join(output_dir, "mind.test.inter")
-    if not os.path.exists(test_inter_output):
-        # 빈 테스트 파일 생성 (헤더만)
+    print("4. 테스트 데이터 생성 (behaviors_194_users.tsv)...")
+    # behaviors_194_users.tsv 읽기
+    # 형식: user_id \t history_sequence \t groundtruth negative1 negative2 negative3 negative4
+    test_behaviors_file = "mind_new/behaviors_194_users.tsv"
+    
+    if os.path.exists(test_behaviors_file):
+        test_data = []
+        test_groundtruth = {}  # 사용자별 groundtruth 저장
+        test_item_positions = {}  # 사용자별 groundtruth의 위치 저장 (평가 시 사용)
+        
+        # 재현 가능성을 위해 시드 설정
+        random.seed(42)
+        
+        with open(test_behaviors_file, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                
+                parts = line.split('\t')
+                if len(parts) < 3:
+                    continue
+                
+                user_id = parts[0]
+                # history = parts[1].split()  # 상호작용 시퀀스 (필요시 사용)
+                test_items = parts[2].split()  # 첫 번째가 groundtruth, 나머지 4개가 negative
+                
+                if len(test_items) > 0:
+                    # 첫 번째가 groundtruth
+                    groundtruth_id = test_items[0]
+                    if groundtruth_id in news_id_mapping:
+                        groundtruth_item_id = news_id_mapping[groundtruth_id]
+                        test_groundtruth[user_id] = groundtruth_item_id
+                        
+                        # 모든 아이템(groundtruth + negative)을 리스트로 만들기
+                        user_test_items = []
+                        
+                        # groundtruth를 positive로 추가
+                        user_test_items.append({
+                            'item_id': groundtruth_item_id,
+                            'rating': 1.0,
+                            'is_groundtruth': True
+                        })
+                        
+                        # negative 샘플들 추가
+                        for neg_item_id in test_items[1:]:
+                            if neg_item_id in news_id_mapping:
+                                neg_item_id_clean = news_id_mapping[neg_item_id]
+                                user_test_items.append({
+                                    'item_id': neg_item_id_clean,
+                                    'rating': 0.0,
+                                    'is_groundtruth': False
+                                })
+                        
+                        # 순서 편향 방지를 위해 랜덤하게 섞기
+                        random.shuffle(user_test_items)
+                        
+                        # groundtruth의 위치 찾기
+                        groundtruth_position = None
+                        for idx, item in enumerate(user_test_items):
+                            if item['is_groundtruth']:
+                                groundtruth_position = idx
+                                break
+                        
+                        test_item_positions[user_id] = groundtruth_position
+                        
+                        # 섞인 순서로 테스트 데이터에 추가
+                        for item in user_test_items:
+                            test_data.append({
+                                'user_id': user_id,
+                                'item_id': item['item_id'],
+                                'rating': item['rating'],
+                                'timestamp': 2000000000  # 테스트 데이터는 더 큰 타임스탬프 사용
+                            })
+        
+        print(f"   - 총 {len(test_groundtruth)}명의 사용자에 대한 테스트 데이터 생성")
+        print(f"   - 총 {len(test_data)}개의 테스트 상호작용 (groundtruth + negative)")
+        
+        # 테스트 데이터를 pickle로 저장 (나중에 평가 시 사용)
+        test_gt_path = os.path.join(output_dir, "mind_test_groundtruth.pkl")
+        with open(test_gt_path, 'wb') as f:
+            pickle.dump({
+                'groundtruth': test_groundtruth,  # 사용자별 groundtruth 아이템 ID
+                'positions': test_item_positions  # 사용자별 groundtruth의 위치 (섞인 후)
+            }, f)
+        print(f"   - {test_gt_path} 저장 완료 (groundtruth + positions)")
+        
+        # 테스트 상호작용을 별도 .inter 파일로 저장
+        test_inter_output = os.path.join(output_dir, "mind.test.inter")
         with open(test_inter_output, 'w', encoding='utf-8') as f:
             f.write("user_id:token\titem_id:token\trating:float\ttimestamp:float\n")
-        print(f"   - {test_inter_output} 생성 완료 (빈 파일, 나중에 테스트 데이터 추가 가능)")
+            for test_item in test_data:
+                f.write(f"{test_item['user_id']}\t{test_item['item_id']}\t{test_item['rating']}\t{test_item['timestamp']}\n")
+        print(f"   - {test_inter_output} 저장 완료")
     else:
-        print(f"   - {test_inter_output} 이미 존재 (기존 파일 유지)")
+        print(f"   - 경고: {test_behaviors_file} 파일을 찾을 수 없습니다.")
+        print(f"   - 빈 테스트 파일을 생성합니다.")
+        test_inter_output = os.path.join(output_dir, "mind.test.inter")
+        with open(test_inter_output, 'w', encoding='utf-8') as f:
+            f.write("user_id:token\titem_id:token\trating:float\ttimestamp:float\n")
+        print(f"   - {test_inter_output} 생성 완료 (빈 파일)")
     
-    print("4. 아이템 정보 파일(.item) 생성...")
+    print("5. 아이템 정보 파일(.item) 생성...")
     # 아이템 정보 파일 생성
     item_output = os.path.join(output_dir, "mind.item")
     with open(item_output, 'w', encoding='utf-8') as f:
@@ -192,7 +284,7 @@ def convert_mind_new_to_recbole():
     
     print(f"   - {item_output} 저장 완료")
     
-    print("5. 사용자 정보 파일(.user) 생성...")
+    print("6. 사용자 정보 파일(.user) 생성...")
     # 사용자 정보 파일 생성 (user_id만 포함)
     user_output = os.path.join(output_dir, "mind.user")
     with open(user_output, 'w', encoding='utf-8') as f:
@@ -204,7 +296,7 @@ def convert_mind_new_to_recbole():
     
     print(f"   - {user_output} 저장 완료")
     
-    print("\n6. 데이터셋 통계 정보:")
+    print("\n7. 데이터셋 통계 정보:")
     print(f"   - 사용자 수: {len(user_ids)}")
     print(f"   - 아이템 수: {len(news_df)}")
     print(f"   - 상호작용 수: {len(inter_df)}")
