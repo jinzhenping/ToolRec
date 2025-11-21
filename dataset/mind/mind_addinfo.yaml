@@ -72,7 +72,7 @@ reproducibility: True
 
 # Pretrained 모델 로드
 load_pretrain: True
-pretrained_name: /SASRec-Nov-10-2025_16-08-05.pth
+pretrained_name: /SASRec-Nov-20-2025_19-28-18.pth
 
 # Attribute-Oriented Retrieval Tool 설정
 freeze_Rec_Params: True  # 기본 추천 모델 파라미터 고정
