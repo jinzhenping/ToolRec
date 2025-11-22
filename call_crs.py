@@ -273,10 +273,10 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
     # 캐시에 모델이 없으면 로드
     if cache_key not in _model_cache:
         try:
-    model_name = model_file_dict[backbone_model][dataset][condition]
-    if mode != 'freeze':
-        model_name = model_BERT[backbone_model][dataset][condition]
-    model_file = checkpoint_path + model_name
+            model_name = model_file_dict[backbone_model][dataset][condition]
+            if mode != 'freeze':
+                model_name = model_BERT[backbone_model][dataset][condition]
+            model_file = checkpoint_path + model_name
     
             print(f"[메모리 최적화] 모델 로드 중: {model_name}")
             print(f"[메모리 최적화] 모델 파일 경로: {model_file}")
@@ -737,7 +737,7 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
             )
     else:
         # 필터링이 필요 없으면 일반 검색 수행
-    topk_score, topk_iid_list = full_sort_topk(
+        topk_score, topk_iid_list = full_sort_topk(
         uid_series, model, test_data, k=topK, device=config["device"]
     )
     
