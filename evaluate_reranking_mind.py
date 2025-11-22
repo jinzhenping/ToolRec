@@ -374,7 +374,7 @@ def calculate_metrics_single_user(groundtruth_id, reranked_list):
     }
 
 
-def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model=False):
+def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model=False, gpu_id=None):
     """
     TSV 파일의 모든 사용자에 대해 ReAct 패턴으로 reranking 평가 수행
     - LLM이 5개 후보를 보고 만족스러운지 판단
@@ -387,7 +387,14 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
         start_idx: 시작 인덱스
         end_idx: 종료 인덱스
         use_model: True면 학습된 모델 사용, False면 LLM 사용
+        gpu_id: GPU 번호 (None이면 기본값 사용)
     """
+    # GPU 설정
+    if gpu_id is not None:
+        import os
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+        print(f"[GPU 설정] CUDA_VISIBLE_DEVICES={gpu_id}로 설정됨")
+    
     from chat_recEnv import RecEnv
     from chat_recWrappers import reActWrapper, LoggingWrapper
     import chat_recEnv, chat_recWrappers
@@ -940,7 +947,7 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='MIND 테스트 데이터셋 reranking 평가')
-    parser.add_argument('--tsv_file', type=str, default='MIND_test_(1000)_unique_users.tsv',
+    parser.add_argument('--tsv_file', type=str, default='mind_new/behaviors_194_users.tsv',
                        help='TSV 파일 경로')
     parser.add_argument('--start', type=int, default=0,
                        help='시작 인덱스 (기본값: 0)')
@@ -953,6 +960,8 @@ if __name__ == "__main__":
                        help='모델 사용 시 attribute 조건 (기본값: None)')
     parser.add_argument('--use_react', action='store_true',
                        help='ReAct 패턴 사용 (LLM이 자동으로 판단하고 reranking tool 사용)')
+    parser.add_argument('--gpu_id', type=int, default=None,
+                       help='GPU 번호 (기본값: None, 환경 변수 또는 기본 설정 사용)')
     
     args = parser.parse_args()
     
@@ -963,7 +972,8 @@ if __name__ == "__main__":
             args.tsv_file, 
             args.start, 
             args.end,
-            use_model=args.use_model
+            use_model=args.use_model,
+            gpu_id=args.gpu_id
         )
     else:
         # 직접 reranking (기존 방식)
