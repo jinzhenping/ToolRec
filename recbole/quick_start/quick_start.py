@@ -535,7 +535,16 @@ def load_data_and_model(model_file):
 
     init_seed(config["seed"], config["reproducibility"])
     model = get_model(config["model"])(config, train_data._dataset).to(config["device"])
-    model.load_state_dict(checkpoint["state_dict"])
+    # strict=False를 사용하여 일치하지 않는 레이어를 건너뛰도록 함
+    # (아이템 수가 다른 경우에도 로드 가능)
+    try:
+        model.load_state_dict(checkpoint["state_dict"], strict=True)
+    except RuntimeError as e:
+        if "size mismatch" in str(e):
+            logger.warning(f"모델 로딩 시 size mismatch 발생. strict=False로 재시도합니다: {str(e)}")
+            model.load_state_dict(checkpoint["state_dict"], strict=False)
+        else:
+            raise
     model.load_other_parameter(checkpoint.get("other_parameter"))
 
     return config, model, dataset, train_data, valid_data, test_data
