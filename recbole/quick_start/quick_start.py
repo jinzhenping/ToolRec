@@ -155,15 +155,17 @@ def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, origina
         if isinstance(test_interaction, dict) and len(test_interaction.get('user_id', [])) == 0:
             logger.info("test_interaction is empty, trying to read from original dataset")
             # original_dataset에서 test 데이터 직접 읽기
-            if original_dataset is not None and hasattr(original_dataset, 'inter_feat'):
+            if original_dataset is not None and hasattr(original_dataset, 'config'):
                 # benchmark_filename이 있으면 test 파일을 직접 읽어야 함
-                if hasattr(original_dataset, 'config') and original_dataset.config.get('benchmark_filename'):
-                    # test 파일명 찾기
+                try:
                     benchmark_files = original_dataset.config['benchmark_filename']
-                    if 'test' in benchmark_files or len(benchmark_files) > 1:
+                    if benchmark_files and ('test' in benchmark_files or len(benchmark_files) > 1):
                         # test 파일 경로 구성
                         import os
-                        data_path = original_dataset.config.get('data_path', './dataset')
+                        try:
+                            data_path = original_dataset.config['data_path']
+                        except (KeyError, AttributeError):
+                            data_path = './dataset'
                         test_file = os.path.join(data_path, dataset_name, f"{dataset_name}.test.inter")
                         if os.path.exists(test_file):
                             logger.info(f"Reading test file directly: {test_file}")
@@ -175,6 +177,8 @@ def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, origina
                             logger.info(f"Read {len(test_interaction.get('user_id', []))} test interactions from file")
                         else:
                             logger.warning(f"Test file not found: {test_file}")
+                except (KeyError, AttributeError) as e:
+                    logger.warning(f"Could not access benchmark_filename from config: {e}")
             
             # 여전히 비어있으면 inter_feat에서 직접 읽기
             if isinstance(test_interaction, dict) and len(test_interaction.get('user_id', [])) == 0:
