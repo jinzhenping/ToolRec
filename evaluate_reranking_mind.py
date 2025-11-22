@@ -374,9 +374,35 @@ def rerank_with_llm(user_id, candidates, history, topK=5):
                 if not reranked_result.startswith('['):
                     reranked_result = '[' + reranked_result + ']'
                 
-                # <ID>, title, score 형식에서 ID 추출
-                id_matches = re.findall(r'<(\d+)>', reranked_result)
-                print(f"  [디버깅] 추출된 ID 순서: {id_matches[:topK]}")
+                # <ID>, title, score 형식에서 ID와 점수 추출
+                # 형식: <ID>, title, score 또는 <ID>, title, category, subcategory, score
+                id_score_pairs = []
+                # 각 줄에서 <ID>와 점수 추출
+                lines = reranked_result.split('\n')
+                for line in lines:
+                    # <ID> 찾기
+                    id_match = re.search(r'<(\d+)>', line)
+                    if id_match:
+                        item_id = id_match.group(1)
+                        # 점수 찾기 (마지막 숫자 또는 소수점이 있는 숫자)
+                        score_match = re.search(r'([\d.]+)\s*$', line.strip())
+                        if score_match:
+                            try:
+                                score = float(score_match.group(1))
+                                id_score_pairs.append((item_id, score))
+                            except ValueError:
+                                # 점수를 파싱할 수 없으면 순서대로 점수 부여
+                                id_score_pairs.append((item_id, len(id_score_pairs) + 1))
+                        else:
+                            # 점수가 없으면 순서대로 점수 부여
+                            id_score_pairs.append((item_id, len(id_score_pairs) + 1))
+                
+                # 점수 순으로 정렬 (내림차순)
+                id_score_pairs.sort(key=lambda x: x[1], reverse=True)
+                id_matches = [item_id for item_id, score in id_score_pairs]
+                
+                print(f"  [디버깅] 추출된 ID-점수 쌍: {id_score_pairs[:topK]}")
+                print(f"  [디버깅] 점수 순으로 정렬된 ID: {id_matches[:topK]}")
                 print(f"  [디버깅] 원본 후보 순서: {[c.replace('N', '') if c.startswith('N') else c for c in candidates[:topK]]}")
                 
                 if id_matches and len(id_matches) >= topK:
