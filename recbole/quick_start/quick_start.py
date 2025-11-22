@@ -118,16 +118,43 @@ def run_recbole(
     }
 
 def dump_userInfo_chat(test_v, dataset, test_data, train_data=None, his_len=10):
+    logger = getLogger()
     uid_iid = {}
     uid_iid_his = {}
     uid_iid_hisScore = {}
     
     # test_data에서 사용자별 테스트 아이템 추출
-    test_interaction = test_data.dataset.inter_feat.interaction
-    test_user_items = {}  # user_id -> [item_ids]
-    
-    # test_data가 sequential 필드를 가지고 있는지 확인
-    has_sequential_fields = 'item_id_list' in test_interaction and 'item_length' in test_interaction
+    try:
+        test_interaction = test_data.dataset.inter_feat.interaction
+        logger.info(f"Test interaction keys: {list(test_interaction.keys()) if isinstance(test_interaction, dict) else 'Not a dict'}")
+        logger.info(f"Test interaction type: {type(test_interaction)}")
+        
+        # test_interaction이 텐서나 배열인 경우 처리
+        if not isinstance(test_interaction, dict):
+            logger.error(f"test_interaction is not a dict: {type(test_interaction)}")
+            logger.info("Total users processed: 0")
+            sys.exit(0)
+        
+        test_user_items = {}  # user_id -> [item_ids]
+        
+        # test_data가 sequential 필드를 가지고 있는지 확인
+        has_sequential_fields = 'item_id_list' in test_interaction and 'item_length' in test_interaction
+        logger.info(f"Has sequential fields: {has_sequential_fields}")
+        
+        if 'user_id' in test_interaction:
+            user_ids = test_interaction['user_id']
+            if hasattr(user_ids, '__len__'):
+                logger.info(f"Number of test interactions: {len(user_ids)}")
+            else:
+                logger.info(f"user_ids type: {type(user_ids)}")
+        else:
+            logger.warning("'user_id' not found in test_interaction")
+    except Exception as e:
+        logger.error(f"Error accessing test_interaction: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        logger.info("Total users processed: 0")
+        sys.exit(0)
     
     if has_sequential_fields:
         # sequential 필드가 있으면 기존 방식 사용
@@ -146,16 +173,41 @@ def dump_userInfo_chat(test_v, dataset, test_data, train_data=None, his_len=10):
                 uid_iid_hisScore[u_token] = iid_hisScore[:i_len]
     else:
         # sequential 필드가 없으면 train_data에서 히스토리 가져오기
-        logger = getLogger()
         logger.info("Sequential fields not found in test_data, using train_data for history")
         
         # test_data에서 사용자별 테스트 아이템 수집
-        for uid, iid in zip(test_interaction['user_id'], test_interaction['item_id']):
-            u_token = test_data.dataset.id2token('user_id', [uid])[0]
-            i_token = test_data.dataset.id2token('item_id', [iid])[0]
-            if u_token not in test_user_items:
-                test_user_items[u_token] = []
-            test_user_items[u_token].append(i_token)
+        try:
+            user_ids = test_interaction['user_id']
+            item_ids = test_interaction['item_id']
+            
+            # 텐서나 배열을 리스트로 변환
+            if hasattr(user_ids, 'cpu'):
+                user_ids = user_ids.cpu().numpy()
+            if hasattr(user_ids, 'tolist'):
+                user_ids = user_ids.tolist()
+            if hasattr(item_ids, 'cpu'):
+                item_ids = item_ids.cpu().numpy()
+            if hasattr(item_ids, 'tolist'):
+                item_ids = item_ids.tolist()
+            
+            logger.info(f"Processing {len(user_ids)} test interactions")
+            
+            for uid, iid in zip(user_ids, item_ids):
+                try:
+                    u_token = test_data.dataset.id2token('user_id', [uid])[0]
+                    i_token = test_data.dataset.id2token('item_id', [iid])[0]
+                    if u_token not in test_user_items:
+                        test_user_items[u_token] = []
+                    test_user_items[u_token].append(i_token)
+                except Exception as e:
+                    logger.warning(f"Error processing user {uid}, item {iid}: {e}")
+                    continue
+            
+            logger.info(f"Found {len(test_user_items)} unique test users")
+        except Exception as e:
+            logger.error(f"Error processing test interactions: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
         
         # train_data에서 사용자별 히스토리 수집
         if train_data is not None:
@@ -197,6 +249,9 @@ def dump_userInfo_chat(test_v, dataset, test_data, train_data=None, his_len=10):
         for u_token, items in test_user_items.items():
             if items:
                 uid_iid[u_token] = items[0]  # 첫 번째 아이템 사용
+        
+        logger.info(f"Created uid_iid for {len(uid_iid)} users")
+        logger.info(f"Created uid_iid_his for {len(uid_iid_his)} users")
     
     users = list(uid_iid.keys())
     # 사용자 수가 200명보다 적으면 전체 사용자 사용, 그렇지 않으면 200명 샘플링
