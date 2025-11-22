@@ -77,7 +77,7 @@ def run_recbole(
     train_data, valid_data, test_data = data_preparation(config, dataset)
 
     if config['dump_to_chat']:
-        dump_userInfo_chat(config['test_v'], config['dataset'], test_data, his_len=config['chat_hislen'])
+        dump_userInfo_chat(config['test_v'], config['dataset'], test_data, train_data, his_len=config['chat_hislen'])
         sys.exit()
     # model loading and initialization
     init_seed(config["seed"] + config["local_rank"], config["reproducibility"])
@@ -117,23 +117,86 @@ def run_recbole(
         "test_result": test_result,
     }
 
-def dump_userInfo_chat(test_v, dataset, test_data, his_len=10):
+def dump_userInfo_chat(test_v, dataset, test_data, train_data=None, his_len=10):
     uid_iid = {}
     uid_iid_his = {}
     uid_iid_hisScore = {}
-    data = test_data.dataset.inter_feat.interaction
-    for (uid, iid, iid_his, i_len, iid_hisScore) in zip(data['user_id'], data['item_id'], data['item_id_list'], data['item_length'], data['rating_list']):
-        u_token = test_data.dataset.id2token('user_id', [uid])[0]
-        i_token = test_data.dataset.id2token('item_id', [iid])[0]
-        iid_his_token = test_data.dataset.id2token('item_id', iid_his)
+    
+    # test_data에서 사용자별 테스트 아이템 추출
+    test_interaction = test_data.dataset.inter_feat.interaction
+    test_user_items = {}  # user_id -> [item_ids]
+    
+    # test_data가 sequential 필드를 가지고 있는지 확인
+    has_sequential_fields = 'item_id_list' in test_interaction and 'item_length' in test_interaction
+    
+    if has_sequential_fields:
+        # sequential 필드가 있으면 기존 방식 사용
+        data = test_interaction
+        for (uid, iid, iid_his, i_len, iid_hisScore) in zip(data['user_id'], data['item_id'], data['item_id_list'], data['item_length'], data['rating_list']):
+            u_token = test_data.dataset.id2token('user_id', [uid])[0]
+            i_token = test_data.dataset.id2token('item_id', [iid])[0]
+            iid_his_token = test_data.dataset.id2token('item_id', iid_his)
 
-        uid_iid[u_token] = i_token
-        if i_len >= his_len:
-            uid_iid_his[u_token] = iid_his_token[i_len - his_len:i_len]
-            uid_iid_hisScore[u_token] = iid_hisScore[i_len - his_len:i_len]
-        else:
-            uid_iid_his[u_token] = iid_his_token[:i_len]
-            uid_iid_hisScore[u_token] = iid_hisScore[:i_len]
+            uid_iid[u_token] = i_token
+            if i_len >= his_len:
+                uid_iid_his[u_token] = iid_his_token[i_len - his_len:i_len]
+                uid_iid_hisScore[u_token] = iid_hisScore[i_len - his_len:i_len]
+            else:
+                uid_iid_his[u_token] = iid_his_token[:i_len]
+                uid_iid_hisScore[u_token] = iid_hisScore[:i_len]
+    else:
+        # sequential 필드가 없으면 train_data에서 히스토리 가져오기
+        logger = getLogger()
+        logger.info("Sequential fields not found in test_data, using train_data for history")
+        
+        # test_data에서 사용자별 테스트 아이템 수집
+        for uid, iid in zip(test_interaction['user_id'], test_interaction['item_id']):
+            u_token = test_data.dataset.id2token('user_id', [uid])[0]
+            i_token = test_data.dataset.id2token('item_id', [iid])[0]
+            if u_token not in test_user_items:
+                test_user_items[u_token] = []
+            test_user_items[u_token].append(i_token)
+        
+        # train_data에서 사용자별 히스토리 수집
+        if train_data is not None:
+            train_interaction = train_data.dataset.inter_feat.interaction
+            if 'item_id_list' in train_interaction and 'item_length' in train_interaction:
+                # train_data에 sequential 필드가 있으면 사용
+                train_data_seq = train_interaction
+                for (uid, iid_his, i_len, iid_hisScore) in zip(train_data_seq['user_id'], train_data_seq['item_id_list'], train_data_seq['item_length'], train_data_seq['rating_list']):
+                    u_token = train_data.dataset.id2token('user_id', [uid])[0]
+                    if u_token in test_user_items:
+                        # 테스트 사용자인 경우에만 히스토리 저장
+                        iid_his_token = train_data.dataset.id2token('item_id', iid_his)
+                        if i_len >= his_len:
+                            uid_iid_his[u_token] = iid_his_token[i_len - his_len:i_len]
+                            uid_iid_hisScore[u_token] = iid_hisScore[i_len - his_len:i_len]
+                        else:
+                            uid_iid_his[u_token] = iid_his_token[:i_len]
+                            uid_iid_hisScore[u_token] = iid_hisScore[:i_len]
+            else:
+                # train_data에도 sequential 필드가 없으면 일반 interaction에서 히스토리 구성
+                train_user_history = {}  # user_id -> [(item_id, rating, timestamp), ...]
+                for uid, iid, rating, ts in zip(train_interaction['user_id'], train_interaction['item_id'], 
+                                                 train_interaction.get('rating', [1.0]*len(train_interaction['user_id'])), 
+                                                 train_interaction.get('timestamp', [0]*len(train_interaction['user_id']))):
+                    u_token = train_data.dataset.id2token('user_id', [uid])[0]
+                    if u_token not in train_user_history:
+                        train_user_history[u_token] = []
+                    i_token = train_data.dataset.id2token('item_id', [iid])[0]
+                    train_user_history[u_token].append((i_token, rating, ts))
+                
+                # 시간 순서대로 정렬하고 최근 his_len개만 사용
+                for u_token in test_user_items.keys():
+                    if u_token in train_user_history:
+                        history = sorted(train_user_history[u_token], key=lambda x: x[2])[-his_len:]
+                        uid_iid_his[u_token] = [item for item, _, _ in history]
+                        uid_iid_hisScore[u_token] = [rating for _, rating, _ in history]
+        
+        # test_user_items에서 첫 번째 아이템을 테스트 아이템으로 사용
+        for u_token, items in test_user_items.items():
+            if items:
+                uid_iid[u_token] = items[0]  # 첫 번째 아이템 사용
     
     users = list(uid_iid.keys())
     # 사용자 수가 200명보다 적으면 전체 사용자 사용, 그렇지 않으면 200명 샘플링
