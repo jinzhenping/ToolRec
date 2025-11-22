@@ -122,8 +122,12 @@ class SASRec_AddInfo2(SequentialRecommender):
             for key in list(pretrained_parameter.keys()):
                 if key not in current_state_dict:
                     del pretrained_parameter[key]
+                # size mismatch가 있는 키는 건너뛰기
+                elif key in current_state_dict and pretrained_parameter[key].shape != current_state_dict[key].shape:
+                    print(f"[경고] {key}의 shape가 일치하지 않습니다. pretrained: {pretrained_parameter[key].shape}, current: {current_state_dict[key].shape}. 건너뜁니다.")
+                    del pretrained_parameter[key]
             current_state_dict.update(pretrained_parameter)
-            self.load_state_dict(current_state_dict)
+            self.load_state_dict(current_state_dict, strict=False)
 
         
         if config["freeze_Rec_Params"]:
