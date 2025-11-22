@@ -364,8 +364,29 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
         
         # 전체 아이템에 대한 점수 계산
         print(f"[디버깅] full_sort_scores 호출 전: uid_series={uid_series}, type={type(uid_series)}")
+        print(f"[디버깅] test_data.is_sequential: {test_data.is_sequential if hasattr(test_data, 'is_sequential') else 'N/A'}")
         
-        # test_data가 sequential인지 확인하고, uid2history_item에 사용자가 있는지 확인
+        # test_data가 sequential인 경우, dataset.inter_feat에 해당 사용자가 있는지 확인
+        if hasattr(test_data, 'is_sequential') and test_data.is_sequential:
+            if hasattr(test_data, 'dataset') and hasattr(test_data.dataset, 'inter_feat'):
+                uid_list = list(uid_series) if isinstance(uid_series, (list, np.ndarray)) else [uid_series]
+                uid_field = test_data.dataset.uid_field
+                inter_feat_uids = test_data.dataset.inter_feat[uid_field].unique().numpy()
+                print(f"[디버깅] dataset.inter_feat에 있는 사용자 ID 수: {len(inter_feat_uids)}")
+                print(f"[디버깅] 요청한 사용자 ID: {uid_list}")
+                missing_uids = [uid for uid in uid_list if int(uid) not in inter_feat_uids]
+                if missing_uids:
+                    print(f"[경고] dataset.inter_feat에 다음 사용자가 없습니다: {missing_uids}")
+                    print(f"[경고] dataset.inter_feat의 사용자 ID 범위: {inter_feat_uids.min()} ~ {inter_feat_uids.max()}")
+                    # 빈 결과 반환
+                    batch_size = len(uid_series) if hasattr(uid_series, '__len__') else 1
+                    return (
+                        torch.zeros((batch_size, 0), device=config["device"]),
+                        [[] for _ in range(batch_size)],
+                        np.array([[] for _ in range(batch_size)])
+                    )
+        
+        # test_data가 sequential이 아닌 경우, uid2history_item에 사용자가 있는지 확인
         if hasattr(test_data, 'is_sequential') and not test_data.is_sequential:
             if hasattr(test_data, 'uid2history_item'):
                 uid_list = list(uid_series) if isinstance(uid_series, (list, np.ndarray)) else [uid_series]
