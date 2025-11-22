@@ -272,16 +272,16 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
     
     # 캐시에 모델이 없으면 로드
     if cache_key not in _model_cache:
-        model_name = model_file_dict[backbone_model][dataset][condition]
-        if mode != 'freeze':
-            model_name = model_BERT[backbone_model][dataset][condition]
-        model_file = checkpoint_path + model_name
-        
+    model_name = model_file_dict[backbone_model][dataset][condition]
+    if mode != 'freeze':
+        model_name = model_BERT[backbone_model][dataset][condition]
+    model_file = checkpoint_path + model_name
+    
         print(f"[메모리 최적화] 모델 로드 중: {model_name}")
-        # load trained model
+    # load trained model
         config, model, dataset_obj, train_data, valid_data, test_data = load_data_and_model(
-            model_file=model_file,
-        )
+        model_file=model_file,
+    )
         
         # 모델을 eval 모드로 설정
         model.eval()
@@ -301,6 +301,16 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
     model = cached['model']
     dataset_obj = cached['dataset']
     test_data = cached['test_data']
+    
+    # test_data가 sequential이고 inter_feat가 비어있는 경우, dataset 객체의 inter_feat를 사용
+    # sequential 모델의 경우 full_sort_scores가 test_data.dataset.inter_feat를 사용하므로,
+    # test_data.dataset을 dataset_obj로 교체
+    if hasattr(test_data, 'is_sequential') and test_data.is_sequential:
+        if hasattr(test_data, 'dataset') and hasattr(test_data.dataset, 'inter_feat'):
+            if len(test_data.dataset.inter_feat) == 0:
+                print(f"[경고] test_data.dataset.inter_feat가 비어있습니다. dataset_obj.inter_feat를 사용합니다.")
+                # test_data.dataset을 dataset_obj로 교체
+                test_data.dataset = dataset_obj
     
     # retrieval top K items, and the corresponding score.
     print(f"[디버깅] user_id 입력: {user_id}, type: {type(user_id)}")
@@ -374,10 +384,50 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                 inter_feat_uids = test_data.dataset.inter_feat[uid_field].unique().numpy()
                 print(f"[디버깅] dataset.inter_feat에 있는 사용자 ID 수: {len(inter_feat_uids)}")
                 print(f"[디버깅] 요청한 사용자 ID: {uid_list}")
+                
+                if len(inter_feat_uids) == 0:
+                    print(f"[경고] test_data.dataset.inter_feat가 비어있습니다! dataset.inter_feat를 사용합니다.")
+                    # dataset 객체의 inter_feat를 직접 사용
+                    if hasattr(dataset_obj, 'inter_feat') and len(dataset_obj.inter_feat) > 0:
+                        inter_feat_uids = dataset_obj.inter_feat[uid_field].unique().numpy()
+                        print(f"[디버깅] dataset.inter_feat에 있는 사용자 ID 수: {len(inter_feat_uids)}")
+                        if len(inter_feat_uids) > 0:
+                            missing_uids = [uid for uid in uid_list if int(uid) not in inter_feat_uids]
+                            if missing_uids:
+                                print(f"[경고] dataset.inter_feat에 다음 사용자가 없습니다: {missing_uids}")
+                                if len(inter_feat_uids) > 0:
+                                    print(f"[경고] dataset.inter_feat의 사용자 ID 범위: {inter_feat_uids.min()} ~ {inter_feat_uids.max()}")
+                                # 빈 결과 반환
+                                batch_size = len(uid_series) if hasattr(uid_series, '__len__') else 1
+                                return (
+                                    torch.zeros((batch_size, 0), device=config["device"]),
+                                    [[] for _ in range(batch_size)],
+                                    np.array([[] for _ in range(batch_size)])
+                                )
+                        else:
+                            print(f"[경고] dataset.inter_feat도 비어있습니다!")
+                            # 빈 결과 반환
+                            batch_size = len(uid_series) if hasattr(uid_series, '__len__') else 1
+                            return (
+                                torch.zeros((batch_size, 0), device=config["device"]),
+                                [[] for _ in range(batch_size)],
+                                np.array([[] for _ in range(batch_size)])
+                            )
+                    else:
+                        print(f"[경고] dataset.inter_feat도 없거나 비어있습니다!")
+                        # 빈 결과 반환
+                        batch_size = len(uid_series) if hasattr(uid_series, '__len__') else 1
+                        return (
+                            torch.zeros((batch_size, 0), device=config["device"]),
+                            [[] for _ in range(batch_size)],
+                            np.array([[] for _ in range(batch_size)])
+                        )
+                
                 missing_uids = [uid for uid in uid_list if int(uid) not in inter_feat_uids]
                 if missing_uids:
                     print(f"[경고] dataset.inter_feat에 다음 사용자가 없습니다: {missing_uids}")
-                    print(f"[경고] dataset.inter_feat의 사용자 ID 범위: {inter_feat_uids.min()} ~ {inter_feat_uids.max()}")
+                    if len(inter_feat_uids) > 0:
+                        print(f"[경고] dataset.inter_feat의 사용자 ID 범위: {inter_feat_uids.min()} ~ {inter_feat_uids.max()}")
                     # 빈 결과 반환
                     batch_size = len(uid_series) if hasattr(uid_series, '__len__') else 1
                     return (
@@ -675,9 +725,9 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
             )
     else:
         # 필터링이 필요 없으면 일반 검색 수행
-        topk_score, topk_iid_list = full_sort_topk(
-            uid_series, model, test_data, k=topK, device=config["device"]
-        )
+    topk_score, topk_iid_list = full_sort_topk(
+        uid_series, model, test_data, k=topK, device=config["device"]
+    )
     
     # print(topk_score)  # scores of top 10 items
     # print(topk_iid_list)  # internal id of top 10 items
