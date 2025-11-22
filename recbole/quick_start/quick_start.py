@@ -250,17 +250,42 @@ def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, origina
         # sequential 필드가 있으면 기존 방식 사용
         data = test_interaction
         for (uid, iid, iid_his, i_len, iid_hisScore) in zip(data['user_id'], data['item_id'], data['item_id_list'], data['item_length'], data['rating_list']):
-            u_token = test_data.dataset.id2token('user_id', [uid])[0]
-            i_token = test_data.dataset.id2token('item_id', [iid])[0]
-            iid_his_token = test_data.dataset.id2token('item_id', iid_his)
+            try:
+                # id2token이 2차원 리스트를 반환할 수 있으므로 평탄화
+                u_token_result = test_data.dataset.id2token('user_id', [uid])
+                if isinstance(u_token_result, list) and len(u_token_result) > 0:
+                    u_token = u_token_result[0] if not isinstance(u_token_result[0], list) else u_token_result[0][0]
+                else:
+                    u_token = str(uid)
+                
+                i_token_result = test_data.dataset.id2token('item_id', [iid])
+                if isinstance(i_token_result, list) and len(i_token_result) > 0:
+                    i_token = i_token_result[0] if not isinstance(i_token_result[0], list) else i_token_result[0][0]
+                else:
+                    i_token = str(iid)
+                
+                iid_his_token_result = test_data.dataset.id2token('item_id', iid_his)
+                # 2차원 리스트를 1차원으로 평탄화
+                if isinstance(iid_his_token_result, list):
+                    iid_his_token = []
+                    for item in iid_his_token_result:
+                        if isinstance(item, list):
+                            iid_his_token.extend(item)
+                        else:
+                            iid_his_token.append(item)
+                else:
+                    iid_his_token = iid_his_token_result
 
-            uid_iid[u_token] = i_token
-            if i_len >= his_len:
-                uid_iid_his[u_token] = iid_his_token[i_len - his_len:i_len]
-                uid_iid_hisScore[u_token] = iid_hisScore[i_len - his_len:i_len]
-            else:
-                uid_iid_his[u_token] = iid_his_token[:i_len]
-                uid_iid_hisScore[u_token] = iid_hisScore[:i_len]
+                uid_iid[u_token] = i_token
+                if i_len >= his_len:
+                    uid_iid_his[u_token] = iid_his_token[i_len - his_len:i_len]
+                    uid_iid_hisScore[u_token] = iid_hisScore[i_len - his_len:i_len]
+                else:
+                    uid_iid_his[u_token] = iid_his_token[:i_len]
+                    uid_iid_hisScore[u_token] = iid_hisScore[:i_len]
+            except Exception as e:
+                logger.warning(f"Error processing user {uid}, item {iid}: {e}")
+                continue
     else:
         # sequential 필드가 없으면 train_data에서 히스토리 가져오기
         logger.info("Sequential fields not found in test_data, using train_data for history")
@@ -284,8 +309,19 @@ def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, origina
             
             for uid, iid in zip(user_ids, item_ids):
                 try:
-                    u_token = test_data.dataset.id2token('user_id', [uid])[0]
-                    i_token = test_data.dataset.id2token('item_id', [iid])[0]
+                    # id2token이 2차원 리스트를 반환할 수 있으므로 평탄화
+                    u_token_result = test_data.dataset.id2token('user_id', [uid])
+                    if isinstance(u_token_result, list) and len(u_token_result) > 0:
+                        u_token = u_token_result[0] if not isinstance(u_token_result[0], list) else u_token_result[0][0]
+                    else:
+                        u_token = str(uid)
+                    
+                    i_token_result = test_data.dataset.id2token('item_id', [iid])
+                    if isinstance(i_token_result, list) and len(i_token_result) > 0:
+                        i_token = i_token_result[0] if not isinstance(i_token_result[0], list) else i_token_result[0][0]
+                    else:
+                        i_token = str(iid)
+                    
                     if u_token not in test_user_items:
                         test_user_items[u_token] = []
                     test_user_items[u_token].append(i_token)
@@ -322,10 +358,21 @@ def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, origina
                 for uid, iid, rating, ts in zip(train_interaction['user_id'], train_interaction['item_id'], 
                                                  train_interaction.get('rating', [1.0]*len(train_interaction['user_id'])), 
                                                  train_interaction.get('timestamp', [0]*len(train_interaction['user_id']))):
-                    u_token = train_data.dataset.id2token('user_id', [uid])[0]
+                    u_token_result = train_data.dataset.id2token('user_id', [uid])
+                    if isinstance(u_token_result, list) and len(u_token_result) > 0:
+                        u_token = u_token_result[0] if not isinstance(u_token_result[0], list) else u_token_result[0][0]
+                    else:
+                        u_token = str(uid)
+                    
                     if u_token not in train_user_history:
                         train_user_history[u_token] = []
-                    i_token = train_data.dataset.id2token('item_id', [iid])[0]
+                    
+                    i_token_result = train_data.dataset.id2token('item_id', [iid])
+                    if isinstance(i_token_result, list) and len(i_token_result) > 0:
+                        i_token = i_token_result[0] if not isinstance(i_token_result[0], list) else i_token_result[0][0]
+                    else:
+                        i_token = str(iid)
+                    
                     train_user_history[u_token].append((i_token, rating, ts))
                 
                 # 시간 순서대로 정렬하고 최근 his_len개만 사용
@@ -351,8 +398,9 @@ def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, origina
     else:
         sampled_users = users
     uid_iid_small = {u: uid_iid[u] for u in sampled_users}
-    uid_iid_his_small = {u: uid_iid_his[u] for u in sampled_users}
-    uid_iid_hisScore_small = {u: uid_iid_hisScore[u] for u in sampled_users}
+    # uid_iid_his에 없는 사용자는 빈 리스트로 처리
+    uid_iid_his_small = {u: uid_iid_his.get(u, []) for u in sampled_users}
+    uid_iid_hisScore_small = {u: uid_iid_hisScore.get(u, []) for u in sampled_users}
 
     # file_path = './dataset/prompts/' + dataset + '_uid_dict.pkl'
     if test_v and not test_v.endswith('/'):
