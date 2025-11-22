@@ -77,7 +77,7 @@ def run_recbole(
     train_data, valid_data, test_data = data_preparation(config, dataset)
 
     if config['dump_to_chat']:
-        dump_userInfo_chat(config['test_v'], config['dataset'], test_data, train_data, his_len=config['chat_hislen'])
+        dump_userInfo_chat(config['test_v'], config['dataset'], test_data, train_data, dataset, his_len=config['chat_hislen'])
         sys.exit()
     # model loading and initialization
     init_seed(config["seed"] + config["local_rank"], config["reproducibility"])
@@ -117,7 +117,7 @@ def run_recbole(
         "test_result": test_result,
     }
 
-def dump_userInfo_chat(test_v, dataset, test_data, train_data=None, his_len=10):
+def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, original_dataset=None, his_len=10):
     logger = getLogger()
     uid_iid = {}
     uid_iid_his = {}
@@ -125,7 +125,70 @@ def dump_userInfo_chat(test_v, dataset, test_data, train_data=None, his_len=10):
     
     # test_data에서 사용자별 테스트 아이템 추출
     try:
-        test_interaction = test_data.dataset.inter_feat.interaction
+        # test_data의 구조 확인
+        logger.info(f"test_data type: {type(test_data)}")
+        logger.info(f"test_data.dataset type: {type(test_data.dataset)}")
+        logger.info(f"test_data.dataset.inter_feat type: {type(test_data.dataset.inter_feat)}")
+        
+        # test_data가 DataLoader인 경우 dataset 속성 확인
+        if hasattr(test_data, 'dataset'):
+            dataset_obj = test_data.dataset
+        else:
+            dataset_obj = test_data
+        
+        # inter_feat 확인
+        if hasattr(dataset_obj, 'inter_feat'):
+            inter_feat = dataset_obj.inter_feat
+            logger.info(f"inter_feat type: {type(inter_feat)}")
+            if hasattr(inter_feat, 'interaction'):
+                test_interaction = inter_feat.interaction
+            elif hasattr(inter_feat, '__dict__'):
+                test_interaction = inter_feat.__dict__
+            else:
+                test_interaction = inter_feat
+        else:
+            logger.error("inter_feat not found in dataset")
+            logger.info("Total users processed: 0")
+            sys.exit(0)
+        
+        # test_interaction이 비어있으면 원본 데이터셋에서 직접 읽기
+        if isinstance(test_interaction, dict) and len(test_interaction.get('user_id', [])) == 0:
+            logger.info("test_interaction is empty, trying to read from original dataset")
+            # original_dataset에서 test 데이터 직접 읽기
+            if original_dataset is not None and hasattr(original_dataset, 'inter_feat'):
+                # benchmark_filename이 있으면 test 파일을 직접 읽어야 함
+                if hasattr(original_dataset, 'config') and original_dataset.config.get('benchmark_filename'):
+                    # test 파일명 찾기
+                    benchmark_files = original_dataset.config['benchmark_filename']
+                    if 'test' in benchmark_files or len(benchmark_files) > 1:
+                        # test 파일 경로 구성
+                        import os
+                        data_path = original_dataset.config.get('data_path', './dataset')
+                        test_file = os.path.join(data_path, dataset_name, f"{dataset_name}.test.inter")
+                        if os.path.exists(test_file):
+                            logger.info(f"Reading test file directly: {test_file}")
+                            import pandas as pd
+                            test_df = pd.read_csv(test_file, sep='\t', header=0)
+                            # 필드명에서 타입 제거 (예: 'user_id:token' -> 'user_id')
+                            test_df.columns = [col.split(':')[0] for col in test_df.columns]
+                            test_interaction = test_df.to_dict('list')
+                            logger.info(f"Read {len(test_interaction.get('user_id', []))} test interactions from file")
+                        else:
+                            logger.warning(f"Test file not found: {test_file}")
+            
+            # 여전히 비어있으면 inter_feat에서 직접 읽기
+            if isinstance(test_interaction, dict) and len(test_interaction.get('user_id', [])) == 0:
+                logger.info("Still empty, trying to read from inter_feat directly")
+                # inter_feat가 DataFrame인 경우
+                if hasattr(inter_feat, 'to_dict'):
+                    test_interaction = inter_feat.to_dict('list')
+                elif hasattr(inter_feat, '__dict__'):
+                    test_interaction = {k: v for k, v in inter_feat.__dict__.items() if not k.startswith('_')}
+                # inter_feat 자체가 dict인 경우
+                elif isinstance(inter_feat, dict):
+                    test_interaction = inter_feat
+                logger.info(f"After reading from inter_feat, user_id length: {len(test_interaction.get('user_id', []))}")
+        
         logger.info(f"Test interaction keys: {list(test_interaction.keys()) if isinstance(test_interaction, dict) else 'Not a dict'}")
         logger.info(f"Test interaction type: {type(test_interaction)}")
         
@@ -143,6 +206,14 @@ def dump_userInfo_chat(test_v, dataset, test_data, train_data=None, his_len=10):
         
         if 'user_id' in test_interaction:
             user_ids = test_interaction['user_id']
+            # 텐서나 배열을 리스트로 변환
+            if hasattr(user_ids, 'cpu'):
+                user_ids = user_ids.cpu().numpy()
+            if hasattr(user_ids, 'tolist'):
+                user_ids = user_ids.tolist()
+            elif hasattr(user_ids, '__iter__') and not isinstance(user_ids, (str, bytes)):
+                user_ids = list(user_ids)
+            
             if hasattr(user_ids, '__len__'):
                 logger.info(f"Number of test interactions: {len(user_ids)}")
             else:
