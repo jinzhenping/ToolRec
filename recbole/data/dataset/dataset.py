@@ -140,7 +140,7 @@ class Dataset(torch.utils.data.Dataset):
         if test_v and not test_v.endswith('/'):
             test_v = test_v + '/'
         user_his_path = './dataset/prompts/' + test_v + self.dataset_name + '_uid_dict.pkl'
-        pattern_path = './dataset/prompts/' + self.dataset_name + '_pattern.json'
+        pattern_path = './dataset/prompts/' + test_v + self.dataset_name + '_pattern.json'
 
         with open(user_his_path, 'rb') as f:
             uid_iid, uid_iid_his, uid_iid_hisScore = pickle.load(f)
