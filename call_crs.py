@@ -272,30 +272,42 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
     
     # 캐시에 모델이 없으면 로드
     if cache_key not in _model_cache:
+        try:
     model_name = model_file_dict[backbone_model][dataset][condition]
     if mode != 'freeze':
         model_name = model_BERT[backbone_model][dataset][condition]
     model_file = checkpoint_path + model_name
     
-        print(f"[메모리 최적화] 모델 로드 중: {model_name}")
+            print(f"[메모리 최적화] 모델 로드 중: {model_name}")
+            print(f"[메모리 최적화] 모델 파일 경로: {model_file}")
     # load trained model
-        config, model, dataset_obj, train_data, valid_data, test_data = load_data_and_model(
+            config, model, dataset_obj, train_data, valid_data, test_data = load_data_and_model(
         model_file=model_file,
     )
-        
-        # 모델을 eval 모드로 설정
-        model.eval()
-        
-        # 캐시에 저장
-        _model_cache[cache_key] = {
-            'config': config,
-            'model': model,
-            'dataset': dataset_obj,
-            'test_data': test_data
-        }
-        print(f"[메모리 최적화] 모델 캐시에 저장 완료: {cache_key}")
+            
+            # 모델을 eval 모드로 설정
+            model.eval()
+            
+            # 캐시에 저장
+            _model_cache[cache_key] = {
+                'config': config,
+                'model': model,
+                'dataset': dataset_obj,
+                'test_data': test_data
+            }
+            print(f"[메모리 최적화] 모델 캐시에 저장 완료: {cache_key}")
+        except Exception as e:
+            print(f"[오류] 모델 로드 실패: {str(e)}")
+            print(f"[오류] 캐시 키: {cache_key}")
+            print(f"[오류] dataset: {dataset}, condition: {condition}, mode: {mode}")
+            import traceback
+            traceback.print_exc()
+            raise  # 예외를 다시 발생시켜서 호출자에게 알림
     
     # 캐시에서 모델 가져오기
+    if cache_key not in _model_cache:
+        raise KeyError(f"모델이 캐시에 없습니다: {cache_key}. 모델 로딩이 실패했을 수 있습니다.")
+    
     cached = _model_cache[cache_key]
     config = cached['config']
     model = cached['model']
