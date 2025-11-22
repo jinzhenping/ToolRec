@@ -306,11 +306,22 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
     print(f"[디버깅] user_id 입력: {user_id}, type: {type(user_id)}")
     uid_series = dataset_obj.token2id(dataset_obj.uid_field, user_id)
     print(f"[디버깅] uid_series 결과: {uid_series}, type: {type(uid_series)}")
+    
+    # uid_series를 list나 numpy array로 변환 (full_sort_scores가 기대하는 형식)
     if isinstance(uid_series, torch.Tensor):
-        print(f"[디버깅] uid_series shape: {uid_series.shape}")
-    elif isinstance(uid_series, (list, np.ndarray)):
-        print(f"[디버깅] uid_series length: {len(uid_series)}")
-    if isinstance(uid_series, (list, np.ndarray)) and len(uid_series) == 0:
+        uid_series = uid_series.cpu().numpy()
+    elif not isinstance(uid_series, (list, np.ndarray)):
+        uid_series = np.array([uid_series])
+    
+    # 1차원 배열로 변환
+    if isinstance(uid_series, np.ndarray) and uid_series.ndim == 0:
+        uid_series = np.array([uid_series])
+    elif isinstance(uid_series, np.ndarray) and uid_series.ndim > 1:
+        uid_series = uid_series.flatten()
+    
+    print(f"[디버깅] uid_series 변환 후: {uid_series}, type: {type(uid_series)}, shape: {uid_series.shape if hasattr(uid_series, 'shape') else len(uid_series)}")
+    
+    if len(uid_series) == 0:
         print(f"[경고] uid_series가 비어있습니다! user_id를 확인하세요: {user_id}")
         batch_size = 1  # 기본값
         return (
@@ -352,11 +363,60 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                 )
         
         # 전체 아이템에 대한 점수 계산
-        print(f"[디버깅] full_sort_scores 호출 전: uid_series shape/len 확인")
+        print(f"[디버깅] full_sort_scores 호출 전: uid_series={uid_series}, type={type(uid_series)}")
+        
+        # test_data가 sequential인지 확인하고, uid2history_item에 사용자가 있는지 확인
+        if hasattr(test_data, 'is_sequential') and not test_data.is_sequential:
+            if hasattr(test_data, 'uid2history_item'):
+                uid_list = list(uid_series) if isinstance(uid_series, (list, np.ndarray)) else [uid_series]
+                # uid2history_item은 numpy array이므로 인덱스로 접근
+                # 사용자 ID가 배열 크기 내에 있는지 확인
+                user_num = len(test_data.uid2history_item)
+                invalid_uids = [uid for uid in uid_list if int(uid) >= user_num or int(uid) < 0]
+                if invalid_uids:
+                    print(f"[경고] 다음 사용자 ID가 유효 범위를 벗어났습니다: {invalid_uids}")
+                    print(f"[경고] 사용 가능한 사용자 ID 범위: 0 ~ {user_num-1}")
+                    print(f"[경고] dataset user_num: {dataset_obj.user_num}")
+                    # 빈 결과 반환
+                    batch_size = len(uid_series) if hasattr(uid_series, '__len__') else 1
+                    return (
+                        torch.zeros((batch_size, 0), device=config["device"]),
+                        [[] for _ in range(batch_size)],
+                        np.array([[] for _ in range(batch_size)])
+                    )
+                # 유효한 사용자인지 확인 (uid2history_item[uid]가 None이 아닌지)
+                missing_uids = []
+                for uid in uid_list:
+                    uid_int = int(uid)
+                    if uid_int < user_num and (test_data.uid2history_item[uid_int] is None or len(test_data.uid2history_item[uid_int]) == 0):
+                        missing_uids.append(uid)
+                if missing_uids:
+                    print(f"[경고] test_data.uid2history_item에 다음 사용자의 히스토리가 없습니다: {missing_uids}")
+                    print(f"[경고] 사용 가능한 사용자 수: {user_num}")
+                    # 빈 결과 반환
+                    batch_size = len(uid_series) if hasattr(uid_series, '__len__') else 1
+                    return (
+                        torch.zeros((batch_size, 0), device=config["device"]),
+                        [[] for _ in range(batch_size)],
+                        np.array([[] for _ in range(batch_size)])
+                    )
+        
         all_scores = full_sort_scores(
             uid_series, model, test_data, device=config["device"]
         )  # shape: [batch_size, num_items]
         print(f"[디버깅] all_scores shape: {all_scores.shape if isinstance(all_scores, torch.Tensor) else type(all_scores)}")
+        
+        # all_scores의 batch_size가 0인 경우 확인
+        if isinstance(all_scores, torch.Tensor) and all_scores.shape[0] == 0:
+            print(f"[경고] all_scores의 batch_size가 0입니다! uid_series를 확인하세요: {uid_series}")
+            print(f"[경고] test_data.is_sequential: {test_data.is_sequential if hasattr(test_data, 'is_sequential') else 'N/A'}")
+            # 빈 결과 반환
+            batch_size = len(uid_series) if hasattr(uid_series, '__len__') else 1
+            return (
+                torch.zeros((batch_size, 0), device=config["device"]),
+                [[] for _ in range(batch_size)],
+                np.array([[] for _ in range(batch_size)])
+            )
         
         # all_scores가 Tensor가 아닌 경우 처리
         if not isinstance(all_scores, torch.Tensor):
