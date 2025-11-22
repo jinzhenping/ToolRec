@@ -303,7 +303,21 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
     test_data = cached['test_data']
     
     # retrieval top K items, and the corresponding score.
+    print(f"[디버깅] user_id 입력: {user_id}, type: {type(user_id)}")
     uid_series = dataset_obj.token2id(dataset_obj.uid_field, user_id)
+    print(f"[디버깅] uid_series 결과: {uid_series}, type: {type(uid_series)}")
+    if isinstance(uid_series, torch.Tensor):
+        print(f"[디버깅] uid_series shape: {uid_series.shape}")
+    elif isinstance(uid_series, (list, np.ndarray)):
+        print(f"[디버깅] uid_series length: {len(uid_series)}")
+    if isinstance(uid_series, (list, np.ndarray)) and len(uid_series) == 0:
+        print(f"[경고] uid_series가 비어있습니다! user_id를 확인하세요: {user_id}")
+        batch_size = 1  # 기본값
+        return (
+            torch.zeros((batch_size, 0), device=config["device"]),
+            [[] for _ in range(batch_size)],
+            np.array([[] for _ in range(batch_size)])
+        )
 
     # 속성 값 필터링이 필요한 경우, 전체 아이템 점수를 가져온 후 필터링
     if attribute_value and condition != 'None' and dataset_obj.item_feat is not None:
@@ -338,9 +352,11 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                 )
         
         # 전체 아이템에 대한 점수 계산
+        print(f"[디버깅] full_sort_scores 호출 전: uid_series shape/len 확인")
         all_scores = full_sort_scores(
             uid_series, model, test_data, device=config["device"]
         )  # shape: [batch_size, num_items]
+        print(f"[디버깅] all_scores shape: {all_scores.shape if isinstance(all_scores, torch.Tensor) else type(all_scores)}")
         
         # all_scores가 Tensor가 아닌 경우 처리
         if not isinstance(all_scores, torch.Tensor):
@@ -532,12 +548,25 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                     filtered_iid_tensor = torch.tensor(filtered_iid_internal, device=config["device"], dtype=torch.long)
                     filtered_scores = all_scores[:, filtered_iid_tensor]  # shape: [batch_size, num_filtered]
                     
+                    print(f"[디버깅] filtered_scores shape: {filtered_scores.shape}")
+                    print(f"[디버깅] all_scores shape: {all_scores.shape}")
+                    print(f"[디버깅] filtered_iid_tensor shape: {filtered_iid_tensor.shape}")
+                    
                     # TopK 선택
                     k = min(topK, len(filtered_iid_internal))
                     topk_scores_filtered, topk_indices_filtered = torch.topk(filtered_scores, k=k, dim=1)
                     
+                    print(f"[디버깅] topk_indices_filtered shape: {topk_indices_filtered.shape}")
+                    print(f"[디버깅] topk_scores_filtered shape: {topk_scores_filtered.shape}")
+                    
                     # 필터링된 인덱스를 원래 아이템 인덱스로 변환
-                    topk_iid_list = filtered_iid_tensor[topk_indices_filtered]
+                    # topk_indices_filtered는 [batch_size, k] 형태
+                    # filtered_iid_tensor는 [num_filtered] 형태
+                    # topk_iid_list는 [batch_size, k] 형태가 되어야 함
+                    batch_size = topk_indices_filtered.shape[0]
+                    topk_iid_list = torch.zeros((batch_size, k), dtype=torch.long, device=config["device"])
+                    for b in range(batch_size):
+                        topk_iid_list[b] = filtered_iid_tensor[topk_indices_filtered[b]]
                     topk_score = topk_scores_filtered
                     
                     print(f"[필터링] {condition}='{attribute_value}' 조건으로 {len(filtered_iids)}개 아이템 중 {k}개 선택")
