@@ -541,6 +541,10 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                     topk_score = topk_scores_filtered
                     
                     print(f"[필터링] {condition}='{attribute_value}' 조건으로 {len(filtered_iids)}개 아이템 중 {k}개 선택")
+                    print(f"[디버깅] topk_iid_list shape: {topk_iid_list.shape}, topk_score shape: {topk_score.shape}")
+                    if topk_iid_list.numel() > 0:
+                        print(f"[디버깅] topk_iid_list 처음 5개: {topk_iid_list[0][:5] if topk_iid_list.dim() > 1 else topk_iid_list[:5]}")
+                        print(f"[디버깅] topk_score 처음 5개: {topk_score[0][:5] if topk_score.dim() > 1 else topk_score[:5]}")
                 else:
                     # 내부 ID 변환 실패
                     print(f"[경고] {condition}='{attribute_value}' 조건에 맞는 아이템의 내부 ID 변환 실패")
@@ -567,7 +571,30 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
     
     # print(topk_score)  # scores of top 10 items
     # print(topk_iid_list)  # internal id of top 10 items
+    
+    # 디버깅: topk_iid_list 확인
+    if topk_iid_list.numel() == 0:
+        print(f"[경고] topk_iid_list가 비어있습니다. shape: {topk_iid_list.shape}")
+        print(f"[경고] topk_score shape: {topk_score.shape}")
+        # 빈 결과 반환
+        batch_size = uid_series.shape[0] if isinstance(uid_series, torch.Tensor) else len(uid_series)
+        return (
+            torch.zeros((batch_size, 0), device=config["device"]),
+            [[] for _ in range(batch_size)],
+            np.array([[] for _ in range(batch_size)])
+        )
+    
+    print(f"[디버깅] topk_iid_list shape: {topk_iid_list.shape}, topk_score shape: {topk_score.shape}")
+    if topk_iid_list.numel() > 0:
+        print(f"[디버깅] topk_iid_list 처음 5개: {topk_iid_list[0][:5] if topk_iid_list.dim() > 1 else topk_iid_list[:5]}")
+        print(f"[디버깅] topk_score 처음 5개: {topk_score[0][:5] if topk_score.dim() > 1 else topk_score[:5]}")
+    
     external_item_list = dataset_obj.id2token(dataset_obj.iid_field, topk_iid_list.cpu())
+    print(f"[디버깅] external_item_list type: {type(external_item_list)}, length: {len(external_item_list) if hasattr(external_item_list, '__len__') else 'N/A'}")
+    if len(external_item_list) > 0:
+        print(f"[디버깅] external_item_list[0] type: {type(external_item_list[0])}, length: {len(external_item_list[0]) if hasattr(external_item_list[0], '__len__') else 'N/A'}")
+        if len(external_item_list[0]) > 0:
+            print(f"[디버깅] external_item_list[0] 처음 5개: {external_item_list[0][:5]}")
     # print(external_item_list)
     external_item_list_name = []
     for u_list in external_item_list:

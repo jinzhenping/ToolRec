@@ -180,7 +180,7 @@ def rerank_with_model(user_id, candidates, topK=5, condition='None', attribute_v
         # 후보 아이템들의 점수 찾기
         candidate_scores = {}
         # external_item_list는 [batch_size, topK] 형태
-        if len(external_item_list) > 0:
+        if len(external_item_list) > 0 and len(external_item_list[0]) > 0:
             item_list = external_item_list[0]  # 첫 번째 사용자
             score_list = topk_score[0].cpu().numpy() if isinstance(topk_score, torch.Tensor) else topk_score[0]
             
@@ -255,9 +255,50 @@ def rerank_with_model(user_id, candidates, topK=5, condition='None', attribute_v
             
             return reranked_list
         else:
-            # 점수를 찾을 수 없으면 원본 순서 반환
-            print(f"  [경고] external_item_list가 비어있음, 원본 순서 사용")
-            return [c.replace('N', '') if c.startswith('N') else c for c in candidates[:topK]]
+            # external_item_list가 비어있으면 full_sort_scores를 사용하여 점수 계산
+            print(f"  [경고] external_item_list가 비어있음, full_sort_scores 사용")
+            from recbole.quick_start import load_data_and_model
+            from utils import model_file_dict, backbone_model, checkpoint_path
+            from recbole.utils.case_study import full_sort_scores
+            
+            # 모델 로드 (캐시에서 가져오기)
+            model_name = model_file_dict[backbone_model]['mind'][condition]
+            model_file = checkpoint_path + model_name
+            config, model, dataset_obj, _, _, test_data = load_data_and_model(model_file=model_file)
+            model.eval()
+            
+            # 사용자 ID를 내부 ID로 변환
+            uid_series = dataset_obj.token2id(dataset_obj.uid_field, [user_id])
+            
+            # 모든 아이템에 대한 점수 계산
+            all_scores = full_sort_scores(uid_series, model, test_data, device=config["device"])
+            all_scores = all_scores[0].cpu().numpy()  # 첫 번째 사용자
+            
+            # 후보 아이템의 점수 찾기
+            candidate_scores = {}
+            for cand in normalized_candidates:
+                # 외부 ID를 내부 ID로 변환
+                try:
+                    iid_internal = dataset_obj.token2id(dataset_obj.iid_field, [cand])
+                    if len(iid_internal) > 0 and iid_internal[0] < len(all_scores):
+                        score = float(all_scores[iid_internal[0]])
+                        candidate_scores[cand] = score
+                        print(f"  [디버깅] 후보 {cand} 점수 (full_sort_scores): {score}")
+                    else:
+                        candidate_scores[cand] = 0.0
+                        print(f"  [경고] 후보 {cand}의 내부 ID를 찾을 수 없어 0점 처리")
+                except Exception as e:
+                    candidate_scores[cand] = 0.0
+                    print(f"  [경고] 후보 {cand} 점수 계산 실패: {e}, 0점 처리")
+            
+            # 점수로 정렬 (내림차순)
+            sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
+            reranked_list = [item_id for item_id, score in sorted_candidates[:topK]]
+            
+            print(f"  [디버깅] 최종 reranked 리스트 (full_sort_scores): {reranked_list}")
+            print(f"  [디버깅] 최종 점수: {[candidate_scores[item] for item in reranked_list]}")
+            
+            return reranked_list
             
     except Exception as e:
         import traceback
