@@ -166,8 +166,23 @@ def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, origina
                             data_path = original_dataset.config['data_path']
                         except (KeyError, AttributeError):
                             data_path = './dataset'
-                        test_file = os.path.join(data_path, dataset_name, f"{dataset_name}.test.inter")
-                        if os.path.exists(test_file):
+                        
+                        # 여러 가능한 경로 시도
+                        possible_paths = [
+                            os.path.join(data_path, dataset_name, f"{dataset_name}.test.inter"),
+                            os.path.join(data_path, f"{dataset_name}.test.inter"),
+                            f"./dataset/{dataset_name}/{dataset_name}.test.inter",
+                            f"./dataset/{dataset_name}.test.inter",
+                        ]
+                        
+                        test_file = None
+                        for path in possible_paths:
+                            abs_path = os.path.abspath(path)
+                            if os.path.exists(abs_path):
+                                test_file = abs_path
+                                break
+                        
+                        if test_file and os.path.exists(test_file):
                             logger.info(f"Reading test file directly: {test_file}")
                             import pandas as pd
                             test_df = pd.read_csv(test_file, sep='\t', header=0)
@@ -176,7 +191,7 @@ def dump_userInfo_chat(test_v, dataset_name, test_data, train_data=None, origina
                             test_interaction = test_df.to_dict('list')
                             logger.info(f"Read {len(test_interaction.get('user_id', []))} test interactions from file")
                         else:
-                            logger.warning(f"Test file not found: {test_file}")
+                            logger.warning(f"Test file not found. Tried paths: {possible_paths}")
                 except (KeyError, AttributeError) as e:
                     logger.warning(f"Could not access benchmark_filename from config: {e}")
             
