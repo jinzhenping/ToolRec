@@ -541,8 +541,19 @@ def load_data_and_model(model_file):
         model.load_state_dict(checkpoint["state_dict"], strict=True)
     except RuntimeError as e:
         if "size mismatch" in str(e):
-            logger.warning(f"모델 로딩 시 size mismatch 발생. strict=False로 재시도합니다: {str(e)}")
-            model.load_state_dict(checkpoint["state_dict"], strict=False)
+            logger.warning(f"모델 로딩 시 size mismatch 발생. size mismatch가 있는 키를 필터링합니다: {str(e)}")
+            # size mismatch가 있는 키를 필터링
+            model_state_dict = model.state_dict()
+            filtered_state_dict = {}
+            for key, value in checkpoint["state_dict"].items():
+                if key in model_state_dict:
+                    if model_state_dict[key].shape == value.shape:
+                        filtered_state_dict[key] = value
+                    else:
+                        logger.warning(f"키 '{key}'의 shape가 일치하지 않습니다. checkpoint: {value.shape}, model: {model_state_dict[key].shape}. 건너뜁니다.")
+                else:
+                    logger.warning(f"키 '{key}'가 모델에 없습니다. 건너뜁니다.")
+            model.load_state_dict(filtered_state_dict, strict=False)
         else:
             raise
     model.load_other_parameter(checkpoint.get("other_parameter"))
