@@ -586,8 +586,8 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
             print(f"  후보 리스트 (평가에 사용): {candidates}")
             print(f"  [확인] 후보 리스트 길이: {len(candidates)}, Groundtruth 포함 여부: {groundtruth in candidates}")
             
-            # 5개 후보를 초기 observation으로 설정
-            candidate_list = format_candidate_list(candidates, itemID_name, item_profile)
+            # 5개 후보를 초기 observation으로 설정 (LLM만 사용할 때는 점수 제외)
+            candidate_list = format_candidate_list(candidates, itemID_name, item_profile, include_score=False)
             
             # 환경 초기화 (user_profile에 있는 키 형식으로 변환)
             # user_profile의 키 형식 확인 및 변환
