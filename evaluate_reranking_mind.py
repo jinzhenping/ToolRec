@@ -90,10 +90,16 @@ def parse_tsv_file(tsv_file, shuffle_candidates=True):
     return data
 
 
-def format_candidate_list(candidates, itemID_name, item_profile=None):
+def format_candidate_list(candidates, itemID_name, item_profile=None, include_score=True):
     """
     5개 후보를 LLM에게 전달할 형식으로 포맷팅
-    Format: <ID>, Title, category, subcategory, score
+    Format: <ID>, Title, category, subcategory (점수는 선택적)
+    
+    Args:
+        candidates: 후보 아이템 리스트
+        itemID_name: 아이템 ID -> 제목 매핑
+        item_profile: 아이템 프로필 (ID, 제목, 카테고리, 서브카테고리 포함)
+        include_score: 점수를 포함할지 여부 (기본값: True)
     """
     formatted_list = []
     for i, item_id in enumerate(candidates):
@@ -104,14 +110,20 @@ def format_candidate_list(candidates, itemID_name, item_profile=None):
         if item_profile and clean_id in item_profile:
             # item_profile 형식: "ID <{iid}>, {title}, category is {category}, subcategory is {subcategory}.\n"
             item_info = item_profile[clean_id].strip()
-            # 점수 추가
-            score = 5.0 - i * 0.5
-            formatted_list.append(f"{item_info.strip('.')}, {score}")
+            # 점수 추가 (include_score가 True일 때만)
+            if include_score:
+                score = 5.0 - i * 0.5
+                formatted_list.append(f"{item_info.strip('.')}, {score}")
+            else:
+                formatted_list.append(item_info.strip('.'))
         else:
             # item_profile이 없으면 title만 사용
             title = itemID_name.get(clean_id, f'News {clean_id}')
-            score = 5.0 - i * 0.5
-            formatted_list.append(f"<{clean_id}>, {title}, {score}")
+            if include_score:
+                score = 5.0 - i * 0.5
+                formatted_list.append(f"<{clean_id}>, {title}, {score}")
+            else:
+                formatted_list.append(f"<{clean_id}>, {title}")
     
     return '\n'.join(formatted_list)
 
@@ -311,8 +323,8 @@ def rerank_with_llm(user_id, candidates, history, topK=5):
     """
     LLM을 사용하여 5개 후보를 reranking (LLM의 일반 지식 사용)
     """
-    # 후보 리스트 포맷팅
-    candidate_list = format_candidate_list(candidates, itemID_name, item_profile)
+    # 후보 리스트 포맷팅 (LLM만 사용할 때는 점수 제외)
+    candidate_list = format_candidate_list(candidates, itemID_name, item_profile, include_score=False)
     
     # 사용자 히스토리 포맷팅
     user_history = format_user_history(user_id, history, itemID_name, item_profile)
