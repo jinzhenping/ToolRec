@@ -148,7 +148,7 @@ def format_user_history(user_id, history, itemID_name, item_profile=None):
     else:
         # user_profile에 없으면 히스토리에서 직접 생성
         history_str = ""
-        for item_id in history[-10:]:  # 최근 10개만 사용
+        for item_id in history:  # 모든 히스토리 사용 (제한 없음)
             clean_id = item_id.replace('N', '') if item_id.startswith('N') else item_id
             # item_profile이 있으면 사용 (title, category, subcategory 포함)
             if item_profile and clean_id in item_profile:
