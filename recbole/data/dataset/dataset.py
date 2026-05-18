@@ -2437,8 +2437,10 @@ class Dataset(torch.utils.data.Dataset):
             ftype = self.field2type[k]
             if ftype == FeatureType.TOKEN:
                 if self.bert_usage and k == self.item_additional_feature:
-                    value[0] = np.zeros(value[1].shape)
-                    value = np.vstack(value).astype(np.float64)
+                    # pandas 2.x / NumPy 2.x: .values may be read-only; do not assign in-place
+                    rows = [np.asarray(v, dtype=np.float64) for v in value]
+                    rows[0] = np.zeros_like(rows[1])
+                    value = np.vstack(rows)
                     new_data[k] = torch.from_numpy(value).float()
                     continue
                 new_data[k] = torch.LongTensor(value)
