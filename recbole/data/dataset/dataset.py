@@ -2422,6 +2422,14 @@ class Dataset(torch.utils.data.Dataset):
             raise ValueError(f"Field [{field}] not in preload_weight")
         return self._preloaded_weight[field]
 
+    @staticmethod
+    def _writable_numpy(values):
+        """pandas .values may be read-only on NumPy 2.x; copy before torch.from_numpy."""
+        arr = np.asarray(values)
+        if not arr.flags.writeable:
+            arr = arr.copy()
+        return arr
+
     def _dataframe_to_interaction(self, data):
         """Convert :class:`pandas.DataFrame` to :class:`~recbole.data.interaction.Interaction`.
 
@@ -2443,16 +2451,22 @@ class Dataset(torch.utils.data.Dataset):
                     value = np.vstack(rows)
                     new_data[k] = torch.from_numpy(value).float()
                     continue
-                new_data[k] = torch.LongTensor(value)
+                new_data[k] = torch.from_numpy(
+                    self._writable_numpy(value)
+                ).long()
             elif ftype == FeatureType.FLOAT:
                 if k == self.item_additional_feature:
-                    tmp = torch.FloatTensor(value).unsqueeze(1)
+                    tmp = torch.from_numpy(
+                        self._writable_numpy(value)
+                    ).float().unsqueeze(1)
                     new_data[k] = tmp.repeat(1, self.config["side_feature_size"])
                     continue
                 if k in self.config["numerical_features"]:
                     new_data[k] = torch.FloatTensor(value.tolist())
                 else:
-                    new_data[k] = torch.FloatTensor(value)
+                    new_data[k] = torch.from_numpy(
+                        self._writable_numpy(value)
+                    ).float()
             elif ftype == FeatureType.TOKEN_SEQ:
                 seq_data = [torch.LongTensor(d[: self.field2seqlen[k]]) for d in value]
                 new_data[k] = rnn_utils.pad_sequence(seq_data, batch_first=True)
