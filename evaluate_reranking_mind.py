@@ -1126,10 +1126,11 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                         from call_crs import retrieval_topk
                         
                         # 모델 점수 가져오기
+                        uid_for_retrieval = resolve_dataset_uid(str(user_id_for_env))
                         topk_score, external_item_list, external_item_list_name = retrieval_topk(
                             dataset=ds_eval,
                             condition=attribute_type if attribute_type != 'None' else 'None',
-                            user_id=[user_id_for_env],
+                            user_id=[uid_for_retrieval],
                             topK=1000,
                             mode='freeze',
                             attribute_value=attribute_value

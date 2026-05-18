@@ -338,7 +338,13 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                         pass
     
     # retrieval top K items, and the corresponding score.
-    print(f"[디버깅] user_id 입력: {user_id}, type: {type(user_id)}")
+    # mind_2000 벤치마크: TSV synthetic uid (예: 1002__inst0) → RecBole user token (1002)
+    if user_id is None:
+        raise ValueError("user_id is required for retrieval_topk")
+    if not isinstance(user_id, (list, tuple, np.ndarray)):
+        user_id = [user_id]
+    user_id = [resolve_dataset_uid(str(u)) for u in user_id]
+    print(f"[디버깅] user_id 입력(매핑 후): {user_id}, type: {type(user_id)}")
     uid_series = dataset_obj.token2id(dataset_obj.uid_field, user_id)
     print(f"[디버깅] uid_series 결과: {uid_series}, type: {type(uid_series)}")
     
