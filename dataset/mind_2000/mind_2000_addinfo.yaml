@@ -1,0 +1,66 @@
+# mind_2000.yaml 과 동일 + SASRec_AddInfo2 도구 학습 옵션 (필요 시 pretrained_name 만 수정)
+
+field_separator: "\t"
+seq_separator: " "
+USER_ID_FIELD: user_id
+ITEM_ID_FIELD: item_id
+RATING_FIELD: rating
+TIME_FIELD: timestamp
+
+NEG_PREFIX: neg_
+ITEM_LIST_LENGTH_FIELD: item_length
+LIST_SUFFIX: _list
+MAX_ITEM_LIST_LENGTH: 50
+POSITION_FIELD: position_id
+
+load_col:
+    inter: ['user_id', 'item_id', 'rating', 'timestamp']
+    user: ['user_id']
+    item: ['item_id', 'title', 'category', 'subcategory']
+
+data_path: ./dataset
+
+learner: adam
+learning_rate: 0.001
+epochs: 300
+train_batch_size: 256
+eval_batch_size: 256
+
+loss_type: 'CE'
+
+benchmark_filename: ['train', 'valid', 'test']
+
+eval_args:
+    group_by: user
+    order: TO
+    split: {'RS': [0.8, 0.1, 0.1]}
+    mode:
+        valid: labeled
+        test: labeled
+
+metrics: ['Recall', 'NDCG', 'MRR', 'Hit']
+topk: [1, 5]
+valid_metric: Recall@5
+valid_metric_bigger: True
+
+train_neg_sample_args: ~
+
+stopping_step: 20
+
+checkpoint_dir: ./dataset/saved_file
+
+use_gpu: True
+gpu_id: 1
+
+seed: 2023
+reproducibility: True
+
+load_pretrain: True
+pretrained_name: /SASRec-REPLACE_ME.pth
+
+freeze_Rec_Params: True
+item_additional_usage: True
+item_additional_feature: category
+side_feature_size: 100
+bert_usage: True
+freeze_side_feature: False
