@@ -18,6 +18,166 @@ def _get_cache_key(dataset, condition, mode):
     """캐시 키 생성"""
     return f"{dataset}_{condition}_{mode}"
 
+
+def clean_item_token(item_id) -> str:
+    """RecBole N-prefix 토큰과 숫자-only 표시 ID를 동일 키로 맞춤."""
+    s = str(item_id).strip()
+    if s.startswith("N") and len(s) > 1 and s[1:].isdigit():
+        return s[1:]
+    return s
+
+
+def _collapse_sequential_all_scores(all_scores, uid_series, dataset):
+    """
+    Sequential 데이터셋에서 full_sort_scores가 사용자당 interaction 행마다
+    점수 행을 반환할 때, 사용자별 마지막(최신 timestamp) 행만 남김.
+    """
+    if not isinstance(all_scores, torch.Tensor):
+        return all_scores
+    if isinstance(uid_series, torch.Tensor):
+        uid_list = [int(u) for u in uid_series.view(-1).tolist()]
+    elif isinstance(uid_series, np.ndarray):
+        uid_list = [int(u) for u in uid_series.reshape(-1).tolist()]
+    else:
+        uid_list = [int(u) for u in uid_series]
+    if all_scores.shape[0] == len(uid_list):
+        return all_scores
+
+    uid_field = dataset.uid_field
+    inter = dataset.inter_feat
+    rows_out = []
+    for u in uid_list:
+        match_rows = (inter[uid_field] == u).nonzero(as_tuple=True)[0]
+        if len(match_rows) == 0:
+            raise ValueError(f"user {u} not found in inter_feat")
+        if dataset.time_field in inter:
+            ts = inter[dataset.time_field][match_rows]
+            best_row = int(match_rows[torch.argmax(ts)].item())
+        else:
+            best_row = int(match_rows[-1].item())
+
+        _, index = (inter[uid_field] == torch.tensor([u], device=inter[uid_field].device)).nonzero(
+            as_tuple=True
+        )
+        pos = (index == best_row).nonzero(as_tuple=True)[0]
+        if len(pos) == 0:
+            rows_out.append(all_scores[-1])
+        else:
+            rows_out.append(all_scores[int(pos[-1].item())])
+    return torch.stack(rows_out, dim=0)
+
+
+def _full_sort_scores_one_per_user(uid_series, model, test_data, device, dataset_obj, train_data=None):
+    """사용자당 최신 시퀀스 1행만 점수 계산 (test inter 비어 있으면 train 마지막 interaction)."""
+    uid_field = test_data.dataset.uid_field
+    uid_list = (
+        uid_series.tolist()
+        if isinstance(uid_series, torch.Tensor)
+        else list(uid_series)
+    )
+    inter = test_data.dataset.inter_feat
+    inter_uids = (
+        inter[uid_field].unique().numpy()
+        if len(inter) > 0
+        else np.array([])
+    )
+    need_train = len(inter_uids) == 0 or any(
+        int(u) not in inter_uids for u in uid_list
+    )
+
+    if (
+        need_train
+        and train_data is not None
+        and hasattr(train_data, "dataset")
+        and len(train_data.dataset.inter_feat) > 0
+    ):
+        from recbole.data.interaction import Interaction
+
+        train_inter = train_data.dataset.inter_feat
+        input_interactions = []
+        for uid in uid_list:
+            u = int(uid)
+            user_mask = train_inter[uid_field] == u
+            user_rows = train_inter[user_mask]
+            if len(user_rows) == 0:
+                input_interactions.append(None)
+                continue
+            if train_data.dataset.time_field in train_inter:
+                ts = user_rows[train_data.dataset.time_field]
+                last_row = user_rows[torch.argmax(ts)]
+            else:
+                last_row = user_rows[-1]
+            input_interactions.append(last_row)
+
+        if all(x is not None for x in input_interactions):
+            combined = {}
+            for key in input_interactions[0].interaction.keys():
+                combined[key] = torch.stack(
+                    [row.interaction[key] for row in input_interactions]
+                )
+            inp = Interaction(combined).to(device)
+            try:
+                scores = model.full_sort_predict(inp)
+            except NotImplementedError:
+                inp = inp.repeat_interleave(dataset_obj.item_num)
+                inp.update(
+                    test_data.dataset.get_item_feature().to(device).repeat(len(uid_list))
+                )
+                scores = model.predict(inp)
+            scores = scores.view(-1, dataset_obj.item_num)
+            scores[:, 0] = -np.inf
+            return scores
+
+    scores = full_sort_scores(uid_series, model, test_data, device=device)
+    return _collapse_sequential_all_scores(scores, uid_series, test_data.dataset)
+
+
+def model_scores_for_candidates(
+    dataset,
+    user_id,
+    candidate_ids,
+    condition="None",
+    mode="freeze",
+    attribute_value=None,
+):
+    """
+    고정 후보(5개)에 대해 모델 full-sort 점수를 직접 조회.
+    top-k 리스트와 ID 문자열 형식(N 유무)에 의존하지 않음.
+    """
+    uid = resolve_dataset_uid(str(user_id))
+    cache_key = _get_cache_key(dataset, condition, mode)
+    if cache_key not in _model_cache:
+        retrieval_topk(
+            dataset=dataset,
+            condition=condition,
+            user_id=[uid],
+            topK=1,
+            mode=mode,
+            attribute_value=attribute_value,
+        )
+    cached = _model_cache[cache_key]
+    config = cached["config"]
+    model = cached["model"]
+    dataset_obj = cached["dataset"]
+    test_data = cached["test_data"]
+    train_data = cached.get("train_data")
+
+    uid_series = dataset_obj.token2id(dataset_obj.uid_field, [uid])
+    all_scores = _full_sort_scores_one_per_user(
+        uid_series, model, test_data, config["device"], dataset_obj, train_data
+    )
+    row = all_scores[0]
+    out = {}
+    for cand in candidate_ids:
+        clean = clean_item_token(cand)
+        tok = f"N{clean}" if clean.isdigit() else str(cand)
+        try:
+            iid = int(dataset_obj.token2id(dataset_obj.iid_field, [tok])[0])
+            out[clean] = float(row[iid].item())
+        except Exception:
+            out[clean] = 0.0
+    return out
+
 def _get_valid_attribute_values(dataset_obj, condition):
     """
     데이터셋에서 유효한 속성 값 목록을 가져옵니다.
@@ -557,29 +717,50 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                             else:
                                 # 일부 사용자가 train_data에 없으면 일반 full_sort_scores 사용
                                 print(f"[경고] 일부 사용자가 train_data에 없습니다. 일반 full_sort_scores를 사용합니다.")
-                                all_scores = full_sort_scores(
-                                    uid_series, model, test_data, device=config["device"]
+                                all_scores = _full_sort_scores_one_per_user(
+                                    uid_series,
+                                    model,
+                                    test_data,
+                                    config["device"],
+                                    dataset_obj,
+                                    train_data,
                                 )
                         else:
-                            # train_data가 없으면 일반 full_sort_scores 사용
-                            print(f"[경고] train_data를 사용할 수 없습니다. 일반 full_sort_scores를 사용합니다.")
-                            all_scores = full_sort_scores(
-                                uid_series, model, test_data, device=config["device"]
+                            print(f"[경고] train_data를 사용할 수 없습니다. full_sort_scores를 사용합니다.")
+                            all_scores = _full_sort_scores_one_per_user(
+                                uid_series,
+                                model,
+                                test_data,
+                                config["device"],
+                                dataset_obj,
+                                train_data,
                             )
                     else:
-                        # train_data가 없으면 일반 full_sort_scores 사용
-                        all_scores = full_sort_scores(
-                            uid_series, model, test_data, device=config["device"]
+                        all_scores = _full_sort_scores_one_per_user(
+                            uid_series,
+                            model,
+                            test_data,
+                            config["device"],
+                            dataset_obj,
+                            train_data,
                         )
                 else:
-                    # test_data.dataset.inter_feat에 사용자가 있으면 일반 full_sort_scores 사용
-                    all_scores = full_sort_scores(
-                        uid_series, model, test_data, device=config["device"]
+                    all_scores = _full_sort_scores_one_per_user(
+                        uid_series,
+                        model,
+                        test_data,
+                        config["device"],
+                        dataset_obj,
+                        train_data,
                     )
             else:
-                # sequential 모델이 아니면 일반 full_sort_scores 사용
-                all_scores = full_sort_scores(
-                    uid_series, model, test_data, device=config["device"]
+                all_scores = _full_sort_scores_one_per_user(
+                    uid_series,
+                    model,
+                    test_data,
+                    config["device"],
+                    dataset_obj,
+                    train_data,
                 )
             
             print(f"[디버깅] all_scores shape: {all_scores.shape if isinstance(all_scores, torch.Tensor) else type(all_scores)}")
@@ -596,8 +777,13 @@ def retrieval_topk(dataset, condition='None', user_id=None, topK=10, mode='freez
                         print(f"[디버깅] test_data.dataset.inter_feat를 dataset_obj.inter_feat로 임시 교체 (재시도)")
                     
                     # 재시도
-                    all_scores = full_sort_scores(
-                        uid_series, model, test_data, device=config["device"]
+                    all_scores = _full_sort_scores_one_per_user(
+                        uid_series,
+                        model,
+                        test_data,
+                        config["device"],
+                        dataset_obj,
+                        train_data,
                     )
                     print(f"[디버깅] 재시도 후 all_scores shape: {all_scores.shape if isinstance(all_scores, torch.Tensor) else type(all_scores)}")
         except Exception as e:
@@ -944,7 +1130,8 @@ def get_cached_model(dataset, condition='None', mode='freeze'):
                 'config': config,
                 'model': model,
                 'dataset': dataset_obj,
-                'test_data': test_data
+                'test_data': test_data,
+                'train_data': train_data,
             }
             print(f"[메모리 최적화] 모델 캐시에 저장 완료: {cache_key}")
         except Exception as e:
@@ -960,7 +1147,13 @@ def get_cached_model(dataset, condition='None', mode='freeze'):
         return None
     
     cached = _model_cache[cache_key]
-    return cached['config'], cached['model'], cached['dataset'], cached['test_data']
+    return (
+        cached['config'],
+        cached['model'],
+        cached['dataset'],
+        cached['test_data'],
+        cached.get('train_data'),
+    )
 
 def clear_model_cache():
     """모델 캐시 정리 (메모리 해제)"""

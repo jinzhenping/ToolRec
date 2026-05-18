@@ -427,204 +427,35 @@ def rerank_with_model(user_id, candidates, topK=5, condition='None', attribute_v
         attribute_value: 구체적인 attribute 값 (예: 'sports', 'football_nfl')
         dataset: RecBole 데이터셋 이름 (기본 utils.dataset_name / REC_DATASET_NAME)
     """
-    from call_crs import retrieval_topk
-    from utils import item_token_id, item_id_token
-    
+    from call_crs import model_scores_for_candidates, clean_item_token
+
     ds_eval = dataset if dataset is not None else REC_DATASET_NAME
     uid_for_model = resolve_dataset_uid(str(user_id))
     try:
-        # 후보 아이템 ID 정규화 (N 제거, 문자열로 통일)
-        normalized_candidates = [str(c.replace('N', '') if c.startswith('N') else c) for c in candidates]
-        
-        # 모든 아이템에 대한 점수를 가져오기 위해 큰 topK로 retrieval
-        # 후보 아이템이 top 1000에 없을 수 있으므로 충분히 큰 값 사용
-        topk_score, external_item_list, external_item_list_name = retrieval_topk(
-            dataset=ds_eval,
+        normalized_candidates = [
+            clean_item_token(c) for c in candidates
+        ]
+        candidate_scores = model_scores_for_candidates(
+            ds_eval,
+            uid_for_model,
+            normalized_candidates,
             condition=condition,
-            user_id=[uid_for_model],
-            topK=10000,  # 더 큰 값으로 증가
             mode='freeze',
-            attribute_value=attribute_value  # LLM이 선택한 구체적인 카테고리 값 전달
+            attribute_value=attribute_value,
         )
-        
-        # 후보 아이템들의 점수 찾기
-        candidate_scores = {}
-        # external_item_list는 [batch_size, topK] 형태
-        if len(external_item_list) > 0 and len(external_item_list[0]) > 0:
-            item_list = external_item_list[0]  # 첫 번째 사용자
-            score_list = _array_from_scores_batch(topk_score[0])
-            
-            # item_list도 문자열로 통일
-            item_list_str = [str(item_id) for item_id in item_list]
-            
-            # 디버깅: 첫 번째 사용자만 상세 로그
-            print(f"  [디버깅] 후보 아이템: {normalized_candidates}")
-            print(f"  [디버깅] Top {len(item_list_str)} 아이템 중 처음 10개: {item_list_str[:10]}")
-            print(f"  [디버깅] Top {len(score_list)} 점수 중 처음 10개: {score_list[:10] if len(score_list) > 0 else 'N/A'}")
-            
-            # 각 후보 아이템의 점수 찾기
-            found_count = 0
-            for i, item_id in enumerate(item_list_str):
-                if item_id in normalized_candidates:
-                    score = float(score_list[i]) if i < len(score_list) else 0.0
-                    candidate_scores[item_id] = score
-                    found_count += 1
-                    print(f"  [디버깅] 후보 {item_id} 점수: {score} (순위: {i+1})")
-            
-            print(f"  [디버깅] Top {len(item_list_str)}에서 찾은 후보 수: {found_count}/{len(normalized_candidates)}")
-            
-            # 점수가 없는 후보 처리: item_token_id를 사용하여 내부 ID로 변환 후 점수 계산 시도
-            missing_candidates = [cand for cand in normalized_candidates if cand not in candidate_scores]
-            if missing_candidates:
-                print(f"  [경고] {len(missing_candidates)}개 후보가 Top {len(item_list_str)}에 없음: {missing_candidates}")
-                # 내부 ID로 변환하여 점수 계산 시도
-                from call_crs import get_cached_model
-                from recbole.utils.case_study import full_sort_scores
-                
-                # 모델 로드 (캐시에서 가져오기)
-                result = get_cached_model(dataset=ds_eval, condition=condition, mode='freeze')
-                if result is None:
-                    print(f"  [경고] 모델 로드 실패, 모든 missing_candidates에 0점 할당")
-                    for cand in missing_candidates:
-                        candidate_scores[cand] = 0.0
-                else:
-                    config, model, dataset_obj, test_data = result
-                
-                # 사용자 ID를 내부 ID로 변환
-                uid_series = dataset_obj.token2id(dataset_obj.uid_field, [uid_for_model])
-                
-                print(f"  [디버깅] missing_candidates 처리 - user_id: {user_id}, uid_series: {uid_series}")
-                
-                if len(uid_series) == 0:
-                    print(f"  [경고] 사용자 ID 변환 실패: {user_id}")
-                    # 모든 missing_candidates에 0점 할당
-                    for cand in missing_candidates:
-                        candidate_scores[cand] = 0.0
-                else:
-                    # 모든 아이템에 대한 점수 계산
-                    all_scores = full_sort_scores(uid_series, model, test_data, device=config["device"])
-                    
-                    print(f"  [디버깅] missing_candidates 처리 - all_scores shape: {all_scores.shape}")
-                    
-                    # all_scores가 비어있지 않은지 확인
-                    if all_scores.shape[0] == 0:
-                        print(f"  [경고] all_scores가 비어있음")
-                        # 모든 missing_candidates에 0점 할당
-                        for cand in missing_candidates:
-                            candidate_scores[cand] = 0.0
-                    else:
-                        all_scores = _array_from_scores_batch(all_scores[0])  # 첫 번째 사용자
-                        
-                        print(f"  [디버깅] missing_candidates 처리 - all_scores (변환 후) shape: {all_scores.shape}, length: {len(all_scores)}")
-                        
-                        # 후보 아이템의 내부 ID 찾기
-                        for cand in missing_candidates:
-                            # 외부 ID를 내부 ID로 변환
-                            try:
-                                iid_internal = dataset_obj.token2id(dataset_obj.iid_field, [cand])
-                                if len(iid_internal) > 0 and iid_internal[0] < len(all_scores):
-                                    score = float(all_scores[iid_internal[0]])
-                                    candidate_scores[cand] = score
-                                    print(f"  [디버깅] 후보 {cand} 점수 (전체 점수에서): {score}")
-                                else:
-                                    candidate_scores[cand] = 0.0
-                                    print(f"  [경고] 후보 {cand}의 내부 ID를 찾을 수 없어 0점 처리 (iid_internal: {iid_internal}, all_scores length: {len(all_scores)})")
-                            except Exception as e:
-                                candidate_scores[cand] = 0.0
-                                print(f"  [경고] 후보 {cand} 점수 계산 실패: {e}, 0점 처리")
-            
-            # 점수가 없는 후보는 0점 처리 (여전히 없는 경우)
-            for cand in normalized_candidates:
-                if cand not in candidate_scores:
-                    candidate_scores[cand] = 0.0
-            
-            # 점수로 정렬 (내림차순)
-            sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-            reranked_list = [item_id for item_id, score in sorted_candidates[:topK]]
-            reranked_scores = {item_id: candidate_scores[item_id] for item_id in reranked_list}
-            
-            print(f"  [디버깅] 최종 reranked 리스트: {reranked_list}")
-            print(f"  [디버깅] 최종 점수: {[reranked_scores[item] for item in reranked_list]}")
-            
-            return reranked_list, reranked_scores
-        else:
-            # external_item_list가 비어있으면 full_sort_scores를 사용하여 점수 계산
-            print(f"  [경고] external_item_list가 비어있음, full_sort_scores 사용")
-            from call_crs import get_cached_model
-            from recbole.utils.case_study import full_sort_scores
-            
-            # 모델 로드 (캐시에서 가져오기)
-            result = get_cached_model(dataset=ds_eval, condition=condition, mode='freeze')
-            if result is None:
-                print(f"  [경고] 모델 로드 실패, 모든 후보에 0점 할당")
-                candidate_scores = {cand: 0.0 for cand in normalized_candidates}
-                sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-                reranked_list = [item_id for item_id, score in sorted_candidates[:topK]]
-                reranked_scores = {item_id: candidate_scores[item_id] for item_id in reranked_list}
-                return reranked_list, reranked_scores
-            
-            config, model, dataset_obj, test_data = result
-            
-            # 사용자 ID를 내부 ID로 변환
-            uid_series = dataset_obj.token2id(dataset_obj.uid_field, [uid_for_model])
-            
-            print(f"  [디버깅] rerank_with_model - user_id: {user_id}, uid_series: {uid_series}")
-            
-            if len(uid_series) == 0:
-                print(f"  [경고] 사용자 ID 변환 실패: {user_id}")
-                # 모든 후보에 0점 할당
-                candidate_scores = {cand: 0.0 for cand in normalized_candidates}
-                sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-                reranked_list = [item_id for item_id, score in sorted_candidates[:topK]]
-                reranked_scores = {item_id: candidate_scores[item_id] for item_id in reranked_list}
-                return reranked_list, reranked_scores
-            
-            # 모든 아이템에 대한 점수 계산
-            all_scores = full_sort_scores(uid_series, model, test_data, device=config["device"])
-            
-            print(f"  [디버깅] rerank_with_model - all_scores shape: {all_scores.shape}")
-            
-            # all_scores가 비어있지 않은지 확인
-            if all_scores.shape[0] == 0:
-                print(f"  [경고] all_scores가 비어있음")
-                # 모든 후보에 0점 할당
-                candidate_scores = {cand: 0.0 for cand in normalized_candidates}
-                sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-                reranked_list = [item_id for item_id, score in sorted_candidates[:topK]]
-                reranked_scores = {item_id: candidate_scores[item_id] for item_id in reranked_list}
-                return reranked_list, reranked_scores
-            
-            all_scores = _array_from_scores_batch(all_scores[0])
-            
-            print(f"  [디버깅] rerank_with_model - all_scores (변환 후) shape: {all_scores.shape}, length: {len(all_scores)}")
-            
-            # 후보 아이템의 점수 찾기
-            candidate_scores = {}
-            for cand in normalized_candidates:
-                # 외부 ID를 내부 ID로 변환
-                try:
-                    iid_internal = dataset_obj.token2id(dataset_obj.iid_field, [cand])
-                    if len(iid_internal) > 0 and iid_internal[0] < len(all_scores):
-                        score = float(all_scores[iid_internal[0]])
-                        candidate_scores[cand] = score
-                        print(f"  [디버깅] 후보 {cand} 점수 (full_sort_scores): {score}")
-                    else:
-                        candidate_scores[cand] = 0.0
-                        print(f"  [경고] 후보 {cand}의 내부 ID를 찾을 수 없어 0점 처리 (iid_internal: {iid_internal}, all_scores length: {len(all_scores)})")
-                except Exception as e:
-                    candidate_scores[cand] = 0.0
-                    print(f"  [경고] 후보 {cand} 점수 계산 실패: {e}, 0점 처리")
-            
-            # 점수로 정렬 (내림차순)
-            sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-            reranked_list = [item_id for item_id, score in sorted_candidates[:topK]]
-            reranked_scores = {item_id: candidate_scores[item_id] for item_id in reranked_list}
-            
-            print(f"  [디버깅] 최종 reranked 리스트 (full_sort_scores): {reranked_list}")
-            print(f"  [디버깅] 최종 점수: {[reranked_scores[item] for item in reranked_list]}")
-            
-            return reranked_list, reranked_scores
-            
+        print(f"  [디버깅] 후보 점수 (full-sort 직접 조회): {candidate_scores}")
+
+        sorted_candidates = sorted(
+            candidate_scores.items(), key=lambda x: x[1], reverse=True
+        )
+        reranked_list = [item_id for item_id, _ in sorted_candidates[:topK]]
+        reranked_scores = {item_id: candidate_scores[item_id] for item_id in reranked_list}
+
+        print(f"  [디버깅] 최종 reranked 리스트: {reranked_list}")
+        print(f"  [디버깅] 최종 점수: {[reranked_scores[item] for item in reranked_list]}")
+
+        return reranked_list, reranked_scores
+
     except Exception as e:
         import traceback
         print(f"  [경고] 모델 reranking 실패: {str(e)}")
@@ -1121,89 +952,14 @@ def evaluate_reranking_with_react(tsv_file, start_idx=0, end_idx=None, use_model
                         if attribute_value:
                             print(f"    - Attribute Value: {attribute_value}")
                         
-                        # 실제 모델 점수를 가져오기 위해 rerank_with_model을 수정하여 점수도 반환하도록 해야 함
-                        # 일단 rerank_with_model을 호출하고, 실제 점수를 다시 가져와서 observation에 사용
-                        from call_crs import retrieval_topk
-                        
-                        # 모델 점수 가져오기
-                        uid_for_retrieval = resolve_dataset_uid(str(user_id_for_env))
-                        topk_score, external_item_list, external_item_list_name = retrieval_topk(
-                            dataset=ds_eval,
+                        reranked_list_model, reranked_scores = rerank_with_model(
+                            user_id_for_env,
+                            candidates,
+                            topK=rerank_topk,
                             condition=attribute_type if attribute_type != 'None' else 'None',
-                            user_id=[uid_for_retrieval],
-                            topK=1000,
-                            mode='freeze',
-                            attribute_value=attribute_value
+                            attribute_value=attribute_value,
+                            dataset=ds_eval,
                         )
-                        
-                        # 후보 아이템들의 점수 찾기
-                        candidate_scores = {}
-                        normalized_candidates = [str(c.replace('N', '') if c.startswith('N') else c) for c in candidates]
-                        
-                        print(f"  [디버깅] 후보 아이템 (정규화): {normalized_candidates}")
-                        
-                        if len(external_item_list) > 0:
-                            item_list = external_item_list[0]
-                            score_list = _array_from_scores_batch(topk_score[0])
-                            
-                            # item_list의 모든 아이템을 문자열로 변환
-                            item_list_str = [str(item_id) for item_id in item_list]
-                            
-                            print(f"  [디버깅] Top {len(item_list_str)} 아이템 중 처음 10개: {item_list_str[:10]}")
-                            print(f"  [디버깅] Top {len(score_list)} 점수 중 처음 10개: {score_list[:10] if len(score_list) > 0 else 'N/A'}")
-                            
-                            found_count = 0
-                            for i, item_id in enumerate(item_list_str):
-                                if item_id in normalized_candidates:
-                                    score = float(score_list[i]) if i < len(score_list) else 0.0
-                                    candidate_scores[item_id] = score
-                                    found_count += 1
-                                    print(f"  [디버깅] 후보 {item_id} 점수: {score} (순위: {i+1})")
-                            
-                            print(f"  [디버깅] Top {len(item_list_str)}에서 찾은 후보 수: {found_count}/{len(normalized_candidates)}")
-                            
-                            # 점수가 없는 후보 처리: full_sort_scores를 사용하여 점수 계산
-                            missing_candidates = [cand for cand in normalized_candidates if cand not in candidate_scores]
-                            if missing_candidates:
-                                print(f"  [경고] {len(missing_candidates)}개 후보가 Top {len(item_list_str)}에 없음: {missing_candidates}")
-                                # rerank_with_model을 사용하여 점수 계산 (full_sort_scores 사용)
-                                _, missing_scores = rerank_with_model(
-                                    user_id_for_env,
-                                    missing_candidates,
-                                    topK=len(missing_candidates),
-                                    condition=attribute_type if attribute_type != 'None' else 'None',
-                                    attribute_value=attribute_value,
-                                    dataset=ds_eval,
-                                )
-                                # missing_scores에서 점수 가져오기
-                                for cand in missing_candidates:
-                                    if cand in missing_scores:
-                                        candidate_scores[cand] = missing_scores[cand]
-                                    else:
-                                        candidate_scores[cand] = 0.0
-                            
-                            # 점수가 없는 후보는 0점 처리 (여전히 없는 경우)
-                            for cand in normalized_candidates:
-                                if cand not in candidate_scores:
-                                    candidate_scores[cand] = 0.0
-                            
-                            # 점수로 정렬 (내림차순)
-                            sorted_candidates = sorted(candidate_scores.items(), key=lambda x: x[1], reverse=True)
-                            reranked_list_model = [item_id for item_id, score in sorted_candidates[:rerank_topk]]
-                            reranked_scores = {item_id: score for item_id, score in sorted_candidates[:rerank_topk]}
-                            
-                            print(f"  [디버깅] 최종 reranked 리스트: {reranked_list_model}")
-                            print(f"  [디버깅] 최종 점수: {[reranked_scores[item] for item in reranked_list_model]}")
-                        else:
-                            # 점수를 찾을 수 없으면 rerank_with_model 사용
-                            reranked_list_model, reranked_scores = rerank_with_model(
-                                user_id_for_env, 
-                                candidates, 
-                                topK=rerank_topk, 
-                                condition=attribute_type if attribute_type != 'None' else 'None',
-                                attribute_value=attribute_value,
-                                dataset=ds_eval,
-                            )
                         
                         # 결과를 observation 형식으로 변환 (실제 모델 점수 사용)
                         reranked_items = []
