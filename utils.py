@@ -33,9 +33,9 @@ model_file_dict = {
         },
         'mind_2000': {
             # 학습 후 checkpoint 파일명으로 교체 (dataset=mind_2000 로 저장된 가중치)
-            'None': 'SASRec-mind_2000-base.pth',
-            'category': 'SASRec_AddInfo2-mind_2000-category.pth',
-            'subcategory': 'SASRec_AddInfo2-mind_2000-subcategory.pth',
+            'None': 'SASRec-May-18-2026_03-07-12.pth',
+            'category': 'SASRec_AddInfo2-May-18-2026_03-28-36.pth',
+            'subcategory': 'SASRec_AddInfo2-May-18-2026_03-49-55.pth',
         }},
     'BERT4Rec': {
         'ml-1m': {
