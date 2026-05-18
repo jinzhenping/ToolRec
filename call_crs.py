@@ -45,25 +45,42 @@ def _collapse_sequential_all_scores(all_scores, uid_series, dataset):
 
     uid_field = dataset.uid_field
     inter = dataset.inter_feat
+    uid_tensor = torch.tensor(uid_list, device=inter[uid_field].device)
+    if inter[uid_field].dtype in (torch.int64, torch.long, torch.int32):
+        uid_tensor = uid_tensor.to(dtype=inter[uid_field].dtype)
+
+    # case_study.full_sort_scores 와 동일: 2D 브로드캐스트로 행 인덱스 정렬
+    _, index = (inter[uid_field] == uid_tensor[:, None]).nonzero(as_tuple=True)
+    if index.numel() != all_scores.shape[0]:
+        # 행 수가 안 맞으면 사용자별로 inter_feat에서 직접 조회
+        rows_out = []
+        for u in uid_list:
+            match_rows = (inter[uid_field] == u).nonzero(as_tuple=True)[0]
+            if len(match_rows) == 0:
+                raise ValueError(f"user {u} not found in inter_feat")
+            if dataset.time_field in inter:
+                ts = inter[dataset.time_field][match_rows]
+                pick = int(match_rows[torch.argmax(ts)].item())
+            else:
+                pick = int(match_rows[-1].item())
+            pos = (index == pick).nonzero(as_tuple=True)[0]
+            rows_out.append(
+                all_scores[int(pos[-1].item())] if len(pos) else all_scores[-1]
+            )
+        return torch.stack(rows_out, dim=0)
+
     rows_out = []
     for u in uid_list:
-        match_rows = (inter[uid_field] == u).nonzero(as_tuple=True)[0]
-        if len(match_rows) == 0:
-            raise ValueError(f"user {u} not found in inter_feat")
+        pos_in_scores = (inter[uid_field][index] == u).nonzero(as_tuple=True)[0]
+        if len(pos_in_scores) == 0:
+            raise ValueError(f"user {u} not found in inter_feat (collapse)")
+        user_inter_rows = index[pos_in_scores]
         if dataset.time_field in inter:
-            ts = inter[dataset.time_field][match_rows]
-            best_row = int(match_rows[torch.argmax(ts)].item())
+            ts = inter[dataset.time_field][user_inter_rows]
+            best_score_row = int(pos_in_scores[torch.argmax(ts)].item())
         else:
-            best_row = int(match_rows[-1].item())
-
-        _, index = (inter[uid_field] == torch.tensor([u], device=inter[uid_field].device)).nonzero(
-            as_tuple=True
-        )
-        pos = (index == best_row).nonzero(as_tuple=True)[0]
-        if len(pos) == 0:
-            rows_out.append(all_scores[-1])
-        else:
-            rows_out.append(all_scores[int(pos[-1].item())])
+            best_score_row = int(pos_in_scores[-1].item())
+        rows_out.append(all_scores[best_score_row])
     return torch.stack(rows_out, dim=0)
 
 
@@ -76,14 +93,13 @@ def _full_sort_scores_one_per_user(uid_series, model, test_data, device, dataset
         else list(uid_series)
     )
     inter = test_data.dataset.inter_feat
-    inter_uids = (
-        inter[uid_field].unique().numpy()
-        if len(inter) > 0
-        else np.array([])
-    )
-    need_train = len(inter_uids) == 0 or any(
-        int(u) not in inter_uids for u in uid_list
-    )
+
+    def _uid_in_inter_feat(inter_feat, u):
+        if inter_feat is None or len(inter_feat) == 0:
+            return False
+        return bool((inter_feat[uid_field] == int(u)).any())
+
+    need_train = any(not _uid_in_inter_feat(inter, u) for u in uid_list)
 
     if (
         need_train
@@ -132,6 +148,30 @@ def _full_sort_scores_one_per_user(uid_series, model, test_data, device, dataset
     return _collapse_sequential_all_scores(scores, uid_series, test_data.dataset)
 
 
+def _ensure_model_cached(dataset, condition="None", mode="freeze"):
+    """retrieval_topk 없이 체크포인트만 로드 (후보 5개 점수용)."""
+    cache_key = _get_cache_key(dataset, condition, mode)
+    if cache_key in _model_cache:
+        return cache_key
+    model_name = model_file_dict[backbone_model][dataset][condition]
+    if mode != "freeze":
+        model_name = model_BERT[backbone_model][dataset][condition]
+    model_file = checkpoint_path + model_name
+    print(f"[메모리 최적화] 모델 로드 중: {model_name}")
+    config, model, dataset_obj, train_data, valid_data, test_data = load_data_and_model(
+        model_file=model_file,
+    )
+    model.eval()
+    _model_cache[cache_key] = {
+        "config": config,
+        "model": model,
+        "dataset": dataset_obj,
+        "test_data": test_data,
+        "train_data": train_data,
+    }
+    return cache_key
+
+
 def model_scores_for_candidates(
     dataset,
     user_id,
@@ -145,16 +185,7 @@ def model_scores_for_candidates(
     top-k 리스트와 ID 문자열 형식(N 유무)에 의존하지 않음.
     """
     uid = resolve_dataset_uid(str(user_id))
-    cache_key = _get_cache_key(dataset, condition, mode)
-    if cache_key not in _model_cache:
-        retrieval_topk(
-            dataset=dataset,
-            condition=condition,
-            user_id=[uid],
-            topK=1,
-            mode=mode,
-            attribute_value=attribute_value,
-        )
+    cache_key = _ensure_model_cached(dataset, condition, mode)
     cached = _model_cache[cache_key]
     config = cached["config"]
     model = cached["model"]
