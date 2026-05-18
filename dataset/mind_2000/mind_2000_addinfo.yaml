@@ -56,7 +56,7 @@ seed: 2023
 reproducibility: True
 
 load_pretrain: True
-pretrained_name: /SASRec-REPLACE_ME.pth
+pretrained_name: /SASRec-May-18-2026_03-07-12.pth
 
 freeze_Rec_Params: True
 item_additional_usage: True
