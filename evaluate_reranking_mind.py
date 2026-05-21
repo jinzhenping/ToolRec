@@ -402,7 +402,11 @@ def format_user_history(
         return ""
 
     # 피클만 있고 리스트가 비어 있을 때: mind류는 동일 접두사 뒤 블록 단위로 최근 N개만 유지
-    if isinstance(prompt_pattern, dict) and REC_DATASET_NAME in ("mind", "mind_2000"):
+    if isinstance(prompt_pattern, dict) and REC_DATASET_NAME in (
+        "mind",
+        "mind_2000",
+        "adressa_2000",
+    ):
         up = prompt_pattern.get("user_pattern", "")
         if up and raw.startswith(up):
             body = raw[len(up) :]
@@ -1215,8 +1219,12 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='MIND 테스트 데이터셋 reranking 평가')
-    parser.add_argument('--tsv_file', type=str, default='dataset/prompts/test/mind_2000_eval_benchmark.tsv',
-                       help='TSV 파일 경로 (mind_2000: scripts/build_mind_2000_eval_assets.py 로 생성)')
+    parser.add_argument(
+        '--tsv_file',
+        type=str,
+        default='dataset/prompts/test/mind_2000_eval_benchmark.tsv',
+        help='벤치마크 TSV (mind_2000 / adressa_2000: scripts/build_*_eval_assets.py)',
+    )
     parser.add_argument('--start', type=int, default=0,
                        help='시작 인덱스 (기본값: 0)')
     parser.add_argument('--end', type=int, default=None,
@@ -1241,7 +1249,7 @@ if __name__ == "__main__":
         '--news_body_tsv',
         type=str,
         default='MIND_2000/MIND_news.tsv',
-        help='본문이 있는 TSV (첫 열 news_id, 마지막 열 body)',
+        help='본문 TSV (MIND: MIND_2000/MIND_news.tsv, Adressa: Adressa_2000/Adressa_news.tsv)',
     )
     parser.add_argument(
         '--news_body_max_chars',

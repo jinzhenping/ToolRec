@@ -2,7 +2,7 @@ import json
 import os
 import pickle
 
-dataset_name="mind_2000"  # mind | mind_2000 등 ToolRec 데이터셋 이름
+dataset_name="adressa_2000"  # mind | mind_2000 등 ToolRec 데이터셋 이름
 test_version="test/"
 
 backbone_model="SASRec"
@@ -36,6 +36,11 @@ model_file_dict = {
             'None': 'SASRec-May-18-2026_03-07-12.pth',
             'category': 'SASRec_AddInfo2-May-18-2026_03-28-36.pth',
             'subcategory': 'SASRec_AddInfo2-May-18-2026_03-49-55.pth',
+        },
+        'adressa_2000': {
+            'None': 'SASRec-adressa_2000-base.pth',
+            'category': 'SASRec_AddInfo2-adressa_2000-category.pth',
+            'subcategory': 'SASRec_AddInfo2-adressa_2000-subcategory.pth',
         }},
     'BERT4Rec': {
         'ml-1m': {
@@ -75,6 +80,10 @@ model_BERT = {
         'mind_2000': {
             'category': 'SASRec_AddInfo2-mind_2000-category.pth',
             'subcategory': 'SASRec_AddInfo2-mind_2000-subcategory.pth',
+        },
+        'adressa_2000': {
+            'category': 'SASRec_AddInfo2-adressa_2000-category.pth',
+            'subcategory': 'SASRec_AddInfo2-adressa_2000-subcategory.pth',
         }},
     'BERT4Rec': {
         'ml-1m': {
